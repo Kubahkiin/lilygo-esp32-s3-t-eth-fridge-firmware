@@ -1,8 +1,6 @@
 #ifndef _PINS_H_
 #define _PINS_H_
 
-#include <stdint.h>
-
 // Elektrozamek
 constexpr uint8_t LOCK = 15;
 constexpr uint8_t LOCK_SWITCH = 16;

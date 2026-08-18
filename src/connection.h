@@ -1,21 +1,23 @@
 #ifndef _CONNECTION_H_
 #define _CONNECTION_H_
 
-#include <ETH.h>
-#include <WiFiClientSecure.h>
-#include <PubSubClient.h>
-#include "../../.secrets/secret.h"
-
-
 constexpr const char* ETHERNET_HOSTNAME = "esp32-p4";
 constexpr uint32_t ETHERNET_DHCP_TIMEOUT_MS = 15000;
+
+constexpr const char* ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = 0;
+const int daylightOffset_sec = 0;
+
+uint32_t epochTime;
+uint32_t lastTimestamp_ms = 0;
+constexpr uint16_t TIMESTAMP_INTERVAL_MS = 1000;
 
 WiFiClientSecure espClient;
 
 PubSubClient client(espClient);
 
 // MQTT Message buffer
-unsigned long lastMsg = 0;
+uint32_t lastMsg = 0;
 #define MSG_BUFFER_SIZE (50)
 char msg[MSG_BUFFER_SIZE];
 
@@ -77,6 +79,18 @@ bool startEthernet() {
   return true;
 }
 
+unsigned long getUnixTime(){
+  time_t now;
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)){
+    Serial.println("Failed to obtain time");
+    return(0);
+  }
+  time(&now);
+
+  return now;
+}
+
 // Connect to MQTT broker
 void reconnect() {
   // loop until connected
@@ -97,9 +111,17 @@ void reconnect() {
   client.subscribe("asps/asp0/asm3/door/permit");
 }
 
-void publishMessage(const char* topic, String payload, boolean retained) {
-  if(client.publish(topic, payload.c_str(), true)) {
+void publishMessage(const char* topic, String payload, boolean retained, boolean print) {
+  if(client.publish(topic, payload.c_str(), true) && print) {
     Serial.print("\n[MQTT] Message published [" + String(topic) + "]: " + payload);
+  }
+}
+
+void timestamp() {
+  if(millis() - lastTimestamp_ms >= TIMESTAMP_INTERVAL_MS)
+  {
+    publishMessage("asps/asp0/asm3/timestamp", String(getUnixTime()), true, false);
+    lastTimestamp_ms = millis();
   }
 }
 
