@@ -1,6 +1,8 @@
 #ifndef _READER_H_
 #define _READER_H_
 
+
+
 HardwareSerial RfidSerial(1);
 
 // CRC16 ///////////////////////////////////////////////
@@ -520,11 +522,9 @@ void handleReaderRequest() {
 
             fastConfigurationStep = FastConfigurationStep::None;
 
-            // Po jednorazowej konfiguracji uruchamiamy całą serię prób.
-            if (!startFastInventoryTest(
-                  FAST_INVENTORY_TRIAL_COUNT)) {
-              fastInventoryState = FastInventoryState::Error;
-            }
+            // Inwentaryzacja rozpocznie się dopiero po żądaniu MQTT.
+            Serial.println(
+              "[RFID] Konfiguracja zakończona; oczekiwanie na żądanie MQTT");
             break;
 
           case FastConfigurationStep::None:

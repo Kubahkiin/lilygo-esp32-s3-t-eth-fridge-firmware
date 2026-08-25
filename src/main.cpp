@@ -61,6 +61,8 @@ void loop() {
     doorSecurity();
   }
 
+  flashLed();
+
   handleReaderRequest();
 
   timestamp();

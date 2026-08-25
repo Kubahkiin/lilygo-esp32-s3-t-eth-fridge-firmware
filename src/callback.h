@@ -20,7 +20,7 @@ void callback(char* topic, byte* message, unsigned int length) {
     lockOpen();
   } else
   if (String(topic) == reader_read_request) {
-    requestStartFastInventory();
+    startFastInventoryTest(1);
   }
 }
 

@@ -5,14 +5,17 @@ bool useLockSecurity = true;
 bool doorIsOpen = false;
 bool warningIsOn = false;
 bool alarmIsOn = false;
+bool flashed = false;
 
 int32_t lockOpened_ms = -10001;
 uint32_t doorOpened_ms = 0;
 uint32_t warningStarted_ms = 0;
 uint32_t alarmStarted_ms = 0;
+uint32_t lastFlash_ms = 501;
 constexpr uint32_t TIME_TO_OPEN_MS = 10000;
 constexpr uint32_t TIME_TO_CHOOSE_MS = 20000;
 constexpr uint32_t TIME_TO_WARN_MS = 10000;
+constexpr uint32_t FLASH_INTERVAL = 500;
 constexpr uint8_t PIXEL_COUNT = 3;
 constexpr neoPixelType STRIP_FORMAT = NEO_GRBW + NEO_KHZ800;
 
@@ -54,6 +57,8 @@ void lockSecurity() {
         strip.clear();
         strip.show();
         doorIsOpen = false;
+        warningIsOn = false;
+        alarmIsOn = false;
         return;
     }
 
@@ -82,10 +87,7 @@ void doorSecurity() {
     if (digitalRead(LOCK_SWITCH) == HIGH && millis() - doorOpened_ms > TIME_TO_CHOOSE_MS && !warningIsOn) {
         warningIsOn = true;
         warningStarted_ms = millis();
-        for (uint8_t pixel = 0; pixel < PIXEL_COUNT; ++pixel) {
-            strip.setPixelColor(pixel, strip.Color(255, 0, 255, 0));
-        }
-        strip.show();
+        
         Serial.print("To też powinno wydarzyć sie raz");
         return;
     }
@@ -94,7 +96,7 @@ void doorSecurity() {
         alarmIsOn = true;
         digitalWrite(BUZZER, HIGH);
          for (uint8_t pixel = 0; pixel < PIXEL_COUNT; ++pixel) {
-            strip.setPixelColor(pixel, strip.Color(255, 128, 128, 0));
+            strip.setPixelColor(pixel, strip.Color(255, 0, 0, 0));
         }
         strip.show();
         return;
@@ -103,6 +105,22 @@ void doorSecurity() {
     if(digitalRead(LOCK_SWITCH) == LOW) {
         Serial.print("Chyba tu nie dochodzi?");
         useLockSecurity = true;
+    }
+}
+
+void flashLed() {
+    if(warningIsOn && millis() - lastFlash_ms > FLASH_INTERVAL && !alarmIsOn) {
+        if (!flashed) {
+        for (uint8_t pixel = 0; pixel < PIXEL_COUNT; ++pixel) {
+            strip.setPixelColor(pixel, strip.Color(255, 0, 0, 0));
+        }
+        flashed = true;
+        } else {
+        strip.clear();
+        flashed = false;
+        }
+        strip.show();
+        lastFlash_ms = millis();
     }
 }
 
