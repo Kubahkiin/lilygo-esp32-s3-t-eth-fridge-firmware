@@ -13,13 +13,13 @@ void callback(char* topic, byte* message, unsigned int length) {
   }
   Serial.println();
   // Door status
-  if(String(topic) == "asps/asp0/asm3/door/status/request") {
+  if(String(topic) == door_status_request) {
     doorStatus();
   } else 
-  if (String(topic) == "asps/asp0/asm3/door/permit" && messageTemp == "1") {
+  if (String(topic) == door_permit && messageTemp == "1") {
     lockOpen();
   } else
-  if (String(topic) == "asps/asp0/asm3/reader/read/request") {
+  if (String(topic) == reader_read_request) {
     requestStartFastInventory();
   }
 }

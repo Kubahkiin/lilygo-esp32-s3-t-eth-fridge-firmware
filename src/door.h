@@ -6,7 +6,7 @@ bool doorIsOpen = false;
 bool warningIsOn = false;
 bool alarmIsOn = false;
 
-uint32_t lockOpened_ms = 0;
+int32_t lockOpened_ms = -10001;
 uint32_t doorOpened_ms = 0;
 uint32_t warningStarted_ms = 0;
 uint32_t alarmStarted_ms = 0;
@@ -23,10 +23,10 @@ void doorStatus() {
     Serial.println("[MQTT] Request to check the door status");
     if(digitalRead(LOCK_SWITCH) == HIGH) {
         Serial.println("[LOCK] Door is open");
-        publishMessage("asps/asp0/asm3/door/status", "1", false, true);
+        publishMessage(door_status.c_str(), "1", false, true);
     } else {
         Serial.println("[LOCK] Door is closed");
-        publishMessage("asps/asp0/asm3/door/status", "0", false, true);
+        publishMessage(door_status.c_str(), "0", false, true);
     }
 }
 
@@ -57,7 +57,7 @@ void lockSecurity() {
         return;
     }
 
-    if (digitalRead(LOCK_SWITCH) == HIGH && millis() - lockOpened_ms <= TIME_TO_OPEN_MS) {
+    if (digitalRead(LOCK_SWITCH) == HIGH && millis() - lockOpened_ms < TIME_TO_OPEN_MS) {
         if(!doorIsOpen) {
             doorOpen();
         }

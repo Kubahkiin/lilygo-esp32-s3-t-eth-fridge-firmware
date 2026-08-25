@@ -106,10 +106,9 @@ void reconnect() {
       delay(2000);
     }
   }
-  client.subscribe("test/topic");
-  client.subscribe("asps/asp0/asm3/door/status/request");
-  client.subscribe("asps/asp0/asm3/door/permit");
-  client.subscribe("asps/asp0/asm3/reader/read/request");
+  client.subscribe(door_status_request.c_str());
+  client.subscribe(door_permit.c_str());
+  client.subscribe(reader_read_request.c_str());
 }
 
 void publishMessage(const char* topic, String payload, boolean retained, boolean print) {
@@ -119,9 +118,9 @@ void publishMessage(const char* topic, String payload, boolean retained, boolean
 }
 
 void timestamp() {
-  if(millis() - lastTimestamp_ms >= TIMESTAMP_INTERVAL_MS)
+  if(millis() - lastTimestamp_ms > TIMESTAMP_INTERVAL_MS)
   {
-    publishMessage("asps/asp0/asm3/timestamp", String(getUnixTime()), true, false);
+    publishMessage(diagnostics_timestamp.c_str(), String(getUnixTime()), true, false);
     lastTimestamp_ms = millis();
   }
 }

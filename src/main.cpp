@@ -6,6 +6,7 @@
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include "../../.secrets/secret.h"
+#include "topics.h"
 // Pin definitions
 #include "pins.h"
 // Ethernet, time and MQTT connection

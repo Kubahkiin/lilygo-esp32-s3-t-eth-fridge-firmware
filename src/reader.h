@@ -1,8 +1,6 @@
 #ifndef _READER_H_
 #define _READER_H_
 
-#include <Arduino.h>
-
 HardwareSerial RfidSerial(1);
 
 // CRC16 ///////////////////////////////////////////////
@@ -2027,8 +2025,6 @@ void printEpc(const uint8_t* epc, size_t epcLength) {
 }
 
 void publishFastInventoryResult() {
-  constexpr const char* INVENTORY_RESULT_TOPIC =
-    "asps/asp0/asm3/reader/read/tags";
   constexpr char HEX_DIGITS[] = "0123456789ABCDEF";
 
   // {"tags":["AABB",...]}: dwa znaki na każdy bajt EPC oraz cudzysłowy
@@ -2072,14 +2068,14 @@ void publishFastInventoryResult() {
 
   // Domyślny bufor PubSubClient (256 B) może być za mały dla listy EPC.
   const size_t mqttBufferSize =
-    payload.length() + strlen(INVENTORY_RESULT_TOPIC) + 16U;
+    payload.length() + strlen(reader_read_tags.c_str()) + 16U;
   if (!client.setBufferSize(mqttBufferSize)) {
     Serial.println(
       "[ERROR][MQTT] Nie można powiększyć bufora wyniku inwentaryzacji");
     return;
   }
 
-  publishMessage(INVENTORY_RESULT_TOPIC, payload, false, true);
+  publishMessage(reader_read_tags.c_str(), payload, false, true);
 }
 
 void printAntennaMask(uint16_t mask) {
