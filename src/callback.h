@@ -18,6 +18,9 @@ void callback(char* topic, byte* message, unsigned int length) {
   } else 
   if (String(topic) == "asps/asp0/asm3/door/permit" && messageTemp == "1") {
     lockOpen();
+  } else
+  if (String(topic) == "asps/asp0/asm3/reader/read/request") {
+    requestStartFastInventory();
   }
 }
 

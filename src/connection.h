@@ -109,10 +109,11 @@ void reconnect() {
   client.subscribe("test/topic");
   client.subscribe("asps/asp0/asm3/door/status/request");
   client.subscribe("asps/asp0/asm3/door/permit");
+  client.subscribe("asps/asp0/asm3/reader/read/request");
 }
 
 void publishMessage(const char* topic, String payload, boolean retained, boolean print) {
-  if(client.publish(topic, payload.c_str(), true) && print) {
+  if(client.publish(topic, payload.c_str(), retained) && print) {
     Serial.print("\n[MQTT] Message published [" + String(topic) + "]: " + payload);
   }
 }

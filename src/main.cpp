@@ -12,6 +12,8 @@
 #include "connection.h"
 // Lock and door functions
 #include "door.h"
+// Reader functions
+#include "reader.h"
 // Handling MQTT requests
 #include "callback.h"
 
@@ -19,10 +21,12 @@
 
 void setup() {
   Serial.begin(115200);
-  //tu sie czasem czeka lae w sumie nie wiem po co
   pinMode(LOCK, OUTPUT);
   pinMode(BUZZER, OUTPUT);
   pinMode(LOCK_SWITCH, INPUT_PULLUP);
+
+  RfidSerial.setRxBufferSize(RFID_RX_BUFFER_SIZE);
+  RfidSerial.begin(RFID_BAUD_RATE, SERIAL_8N1, READER_RX, READER_TX);
 
   strip.begin();
   strip.setBrightness(32);
@@ -38,6 +42,9 @@ void setup() {
   lastTimestamp_ms = millis();
   espClient.setCACert(root_ca);
   client.setServer(mqtt_broker, mqtt_port);
+
+  requestReaderInfo();
+
   client.setCallback(callback);
 }
 
@@ -52,6 +59,8 @@ void loop() {
   } else {
     doorSecurity();
   }
+
+  handleReaderRequest();
 
   timestamp();
 
