@@ -21,6 +21,7 @@ void setup() {
   Serial.begin(115200);
   //tu sie czasem czeka lae w sumie nie wiem po co
   pinMode(LOCK, OUTPUT);
+  pinMode(BUZZER, OUTPUT);
   pinMode(LOCK_SWITCH, INPUT_PULLUP);
 
   strip.begin();
@@ -44,7 +45,14 @@ void loop() {
   if (!client.connected())
     reconnect();
   client.loop();
-  lockSecurity();
+ 
+
+  if(useLockSecurity) {
+    lockSecurity();
+  } else {
+    doorSecurity();
+  }
 
   timestamp();
+
 }
