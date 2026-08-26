@@ -1,6 +1,16 @@
 #ifndef _CALLBACK_H_
 #define _CALLBACK_H_
 
+void callback(char* topic, byte* message, unsigned int length);
+
+/**
+ *  Obsługa przychodzących wiadomości na subskrybowane topici.
+ *  Główna funkcja do obsługi lodówki przez serwer MQTT.
+ *  W zależności od tematu, wykonywane są konkretne funkcje
+ *  \param topic Topic wiadomości
+ *  \param message Treść wiadomości
+ *  \param length Długość wiadomości
+ */
 void callback(char* topic, byte* message, unsigned int length) {
   Serial.println("[MQTT] Message arrived on topic: ");
   Serial.print(topic);
@@ -12,7 +22,6 @@ void callback(char* topic, byte* message, unsigned int length) {
     messageTemp += (char)message[i];
   }
   Serial.println();
-  // Door status
   if(String(topic) == door_status_request) {
     doorStatus();
   } else 

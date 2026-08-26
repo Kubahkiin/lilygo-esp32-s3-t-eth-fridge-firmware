@@ -1,31 +1,54 @@
 #ifndef _CONNECTION_H_
 #define _CONNECTION_H_
 
+/** @name Stałe Ethernet  */
+///@{
 constexpr const char* ETHERNET_HOSTNAME = "esp32-p4";
 constexpr uint32_t ETHERNET_DHCP_TIMEOUT_MS = 15000;
+///@}
 
+/** @name Stałe dla konfiguracji połączenia z serwerem NTP  */
+///@{
 constexpr const char* ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = 0;
 const int daylightOffset_sec = 0;
+///@}
 
-uint32_t epochTime;
+/** @name Zmienne pomocnicze timestamp  */
+///@{
+uint32_t epochTime = 0;
 uint32_t lastTimestamp_ms = 0;
 constexpr uint16_t TIMESTAMP_INTERVAL_MS = 1000;
+///@}
 
+/** @name Bezpieczne połączenie w celu łączenia z MQTT  */
+///@{
 WiFiClientSecure espClient;
-
 PubSubClient client(espClient);
+///@}
 
-// MQTT Message buffer
+/** @name Bufor dla wiadomości MQTT  */
+///@{
 uint32_t lastMsg = 0;
 #define MSG_BUFFER_SIZE (50)
 char msg[MSG_BUFFER_SIZE];
+///@}
 
 const char* clientID = "ESP32-P4-ETH";
 
 // Flag
 bool isEthernetOnline = false;
 
+void onEvent(arduino_event_id_t event);
+bool startEthernet();
+uint32_t getUnixTime();
+void reconnect();
+void publishMessage(const char* topic, String payload, boolean retained, boolean print);
+void timestamp();
+
+/**
+ *  Obsługa zdarzeń arduino powiązanych z usługą Ethernet
+ */
 void onEvent(arduino_event_id_t event) {
   switch (event) {
     case ARDUINO_EVENT_ETH_START:
@@ -56,6 +79,10 @@ void onEvent(arduino_event_id_t event) {
   }
 }
 
+/**
+ *  Uruchomienie Ethernetu i oczekiwania na serwer DHCP w określonym czasie.
+ *  Zwraca wartość true, jeśli udało się połączyć z internetem i false jeżeli nie.
+ */
 bool startEthernet() {
   Network.onEvent(onEvent);
 
@@ -79,7 +106,10 @@ bool startEthernet() {
   return true;
 }
 
-unsigned long getUnixTime(){
+/**
+ *  Pobiera obecny czas w sekundach i zwraca go jako uint32_t (unsigned long)
+ */
+uint32_t getUnixTime() {
   time_t now;
   struct tm timeinfo;
   if(!getLocalTime(&timeinfo)){
@@ -91,7 +121,11 @@ unsigned long getUnixTime(){
   return now;
 }
 
-// Connect to MQTT broker
+/**
+ *  Łączy z serwerem MQTT jeżeli jeszcze nie nawiązano połęczenia.
+ *  Większość funkconalności lodówki polega na odbieraniu i wysyłaniu wiadomości MQTT,
+ *  więc program nie będzie działać dopóki połączenie nie zostanie nawiązane
+ */
 void reconnect() {
   // loop until connected
   while(!client.connected()) {
@@ -111,12 +145,22 @@ void reconnect() {
   client.subscribe(reader_read_request.c_str());
 }
 
+/**
+ *  Publikuje wiadomość na podany topic na serwerze MQTT
+ *  \param topic Topic MQTT w postaci stałej tablicy znaków
+ *  \param payload Wiadomość która ma zostać przesłana w postaci łańcucha znaków
+ *  \param retained Czy wiadomość ma być retained czy nie
+ *  \param print Czy informować o przesłaniu tej wiadomości na Serialu czy nie
+ */
 void publishMessage(const char* topic, String payload, boolean retained, boolean print) {
   if(client.publish(topic, payload.c_str(), retained) && print) {
     Serial.print("\n[MQTT] Message published [" + String(topic) + "]: " + payload);
   }
 }
 
+/**
+ *  Publikuje UNIX timestamp na serwerze MQTT co określony czas (co sekundę)
+ */
 void timestamp() {
   if(millis() - lastTimestamp_ms > TIMESTAMP_INTERVAL_MS)
   {
