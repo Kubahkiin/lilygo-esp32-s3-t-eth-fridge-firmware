@@ -4,12 +4,19 @@
  *   Flagi które określają stan drzwi
  */
 ///@{
+/** Wybór funkcji sterującej monitorowaniem */
 bool useLockSecurity = true;
+/** Drzwi zostały otwarte w poprawny sposób */
 bool doorIsOpen = false;
+/** Drzwi są zamknięte */
 bool doorIsClosed = false;
+/** Drzwi nie powinny być otwarte (a pewnie są) */
 bool doorShouldntBeOpen = false;
+/** Uruchomiono ostrzeżenie (i miganie ledów) */
 bool warningIsOn = false;
+/** Alarm włączony */
 bool alarmIsOn = false;
+/** Bool pomocniczy do migania ledów */
 bool flashed = false;
 ///@}
 /** @name Zmienne czasowe
