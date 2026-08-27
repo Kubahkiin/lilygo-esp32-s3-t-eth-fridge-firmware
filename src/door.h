@@ -6,6 +6,8 @@
 ///@{
 bool useLockSecurity = true;
 bool doorIsOpen = false;
+bool doorIsClosed = false;
+bool doorShouldntBeOpen = false;
 bool warningIsOn = false;
 bool alarmIsOn = false;
 bool flashed = false;
@@ -71,6 +73,8 @@ void doorStatus() {
  *   minęło czasu w funkcji lockSecurity
  */
 void lockOpen() {
+    doorShouldntBeOpen = false;
+    doorIsClosed = false;
     digitalWrite(LOCK, HIGH);
     lockOpened_ms = millis();
     for (uint8_t pixel = 0; pixel < PIXEL_COUNT; ++pixel) {
@@ -85,11 +89,9 @@ void lockOpen() {
  *   i zamknięcie elektrozamka.
  */
 void doorOpen() {
-    doorIsOpen = true;
     doorOpened_ms = millis();
     useLockSecurity = false;
     digitalWrite(LOCK, LOW);
-    Serial.print("\nDrzwi zostały otwarte.");
 }
 
 /**
@@ -98,36 +100,47 @@ void doorOpen() {
  *  Funkcja resetuje także flagi i wyłącza światła gdy drzwi zostaną zamknięte.
  */
 void lockSecurity() {
-    if(digitalRead(LOCK_SWITCH) == LOW && (millis() - lockOpened_ms > TIME_TO_OPEN_MS || doorIsOpen) ) {
+    if(digitalRead(LOCK_SWITCH) == LOW &&
+            (millis() - lockOpened_ms > TIME_TO_OPEN_MS || doorIsOpen) &&
+            !doorIsClosed ) {
+        doorIsClosed = true;
         digitalWrite(LOCK, LOW);
-        digitalWrite(BUZZER, LOW);
+        // digitalWrite(BUZZER, LOW);
         strip.clear();
         strip.show();
         doorIsOpen = false;
         warningIsOn = false;
         alarmIsOn = false;
-        return;
+        doorShouldntBeOpen = false;
+        Serial.print("\nDrzwi są zamknięte");
     }
 
-    if (digitalRead(LOCK_SWITCH) == HIGH && millis() - lockOpened_ms < TIME_TO_OPEN_MS) {
-        if(!doorIsOpen) {
-            doorOpen();
-        }
-        for (uint8_t pixel = 0; pixel < PIXEL_COUNT; ++pixel) {
+    if (digitalRead(LOCK_SWITCH) == HIGH &&
+            millis() - lockOpened_ms < TIME_TO_OPEN_MS &&
+            !doorIsOpen) {
+        doorIsOpen = true;
+        doorIsClosed = false;
+        doorOpen();
+        for (uint8_t pixel = 0; pixel < PIXEL_COUNT; ++pixel)
+        {
             strip.setPixelColor(pixel, strip.Color(0, 0, 0, 255));
         }
         strip.show();
-        return;
+        Serial.print("\nDrzwi zostały otwarte.");
     }
 
-    if (digitalRead(LOCK_SWITCH) == HIGH && millis() - lockOpened_ms > TIME_TO_OPEN_MS) {
-        for (uint8_t pixel = 0; pixel < PIXEL_COUNT; ++pixel) {
+    if (digitalRead(LOCK_SWITCH) == HIGH &&
+            millis() - lockOpened_ms > TIME_TO_OPEN_MS &&
+            !doorShouldntBeOpen) {
+        doorShouldntBeOpen = true;
+        doorIsClosed = false;
+        for (uint8_t pixel = 0; pixel < PIXEL_COUNT; ++pixel)
+        {
             strip.setPixelColor(pixel, strip.Color(255, 0, 0, 0));
         }
         strip.show();
-
+        Serial.print("\nDrzwi nie powinny być otwarte");
     }
-    
 }
 
 /**
@@ -138,27 +151,31 @@ void lockSecurity() {
  *  funkcji sprawdzającej z powrotem na lockSecurity
  */
 void doorSecurity() {
-    if (digitalRead(LOCK_SWITCH) == HIGH && millis() - doorOpened_ms > TIME_TO_CHOOSE_MS && !warningIsOn) {
+    if (digitalRead(LOCK_SWITCH) == HIGH &&
+            millis() - doorOpened_ms > TIME_TO_CHOOSE_MS &&
+            !warningIsOn) {
         warningIsOn = true;
         warningStarted_ms = millis();
         
-        Serial.print("Ostrzeżenie, drzwi powinny być zamknięte");
-        return;
+        Serial.print("\nOstrzeżenie, drzwi powinny być zamknięte");
     }
 
-    if(digitalRead(LOCK_SWITCH) == HIGH && millis() - warningStarted_ms > TIME_TO_WARN_MS && warningIsOn) {
+    if(digitalRead(LOCK_SWITCH) == HIGH &&
+            millis() - warningStarted_ms > TIME_TO_WARN_MS &&
+            warningIsOn &&
+            !alarmIsOn) {
         alarmIsOn = true;
-        digitalWrite(BUZZER, HIGH);
+        //digitalWrite(BUZZER, HIGH);
          for (uint8_t pixel = 0; pixel < PIXEL_COUNT; ++pixel) {
             strip.setPixelColor(pixel, strip.Color(255, 0, 0, 0));
         }
         strip.show();
-        return;
+        Serial.print("\nAlarm włączony");
     }
 
     if(digitalRead(LOCK_SWITCH) == LOW) {
-        Serial.print("Drzwi zostały zamknięte");
         useLockSecurity = true;
+        Serial.print("\nDrzwi zostały zamknięte");
     }
 }
 

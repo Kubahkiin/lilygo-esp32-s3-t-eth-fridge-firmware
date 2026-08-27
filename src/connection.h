@@ -87,7 +87,17 @@ bool startEthernet() {
   Network.onEvent(onEvent);
 
   Serial.println("[ETH] Starting Ethernet");
-  if (!ETH.begin()) {
+  if (!ETH.begin(
+    ETH_PHY_W5500,
+    ETH_ADDR,
+    ETH_CS_PIN,
+    ETH_INT_PIN,
+    ETH_RST_PIN,
+    SPI3_HOST,
+    ETH_SCLK_PIN,
+    ETH_MISO_PIN,
+    ETH_MOSI_PIN
+  )) {
     Serial.println("[ETH] Ethernet failed to start");
     return false;
   }

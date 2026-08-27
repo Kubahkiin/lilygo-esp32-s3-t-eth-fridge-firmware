@@ -20,14 +20,14 @@ constexpr uint8_t LIGHT = 17;
  * 
  */
 ///@{
-constexpr uint8_t READER_TX = 32;
-constexpr uint8_t READER_RX = 33;
+constexpr uint8_t READER_TX = 19;
+constexpr uint8_t READER_RX = 20;
 ///@}
 
 /** @name Buzzer
  * 
  */
 ///@{
-constexpr uint8_t BUZZER = 6;
+//constexpr uint8_t BUZZER = 6;
 ///@}
 #endif

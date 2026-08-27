@@ -13,11 +13,11 @@
 #include "pins.h"
 // Połączenie z Ethernetem, serwerem NTP i brokerem MQTT
 #include "connection.h"
-// Obsługa elektrozamka i monitorowanie stanu drzwi 
+// Obsługa elektrozamka i monitorowanie stanu drzwi
 #include "door.h"
-// Obsługa czytnika 
+// Obsługa czytnika
 #include "reader.h"
-// Obsługa żądań z serwera MQTT 
+// Obsługa żądań z serwera MQTT
 #include "callback.h"
 
 
@@ -30,7 +30,7 @@ void setup() {
   Serial.begin(115200);
   // Ustawienie trybu pinów, żeby odeniść sie do nich w programie
   pinMode(LOCK, OUTPUT);
-  pinMode(BUZZER, OUTPUT);
+  //pinMode(BUZZER, OUTPUT);
   pinMode(LOCK_SWITCH, INPUT_PULLUP);
   // Rozpoczęcie komunikacji z czytnikiem przez UART
   RfidSerial.setRxBufferSize(RFID_RX_BUFFER_SIZE);
