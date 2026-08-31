@@ -1,7 +1,7 @@
 #ifndef _CALLBACK_H_
 #define _CALLBACK_H_
 
-void callback(char* topic, byte* message, unsigned int length);
+void callback(char *topic, byte *message, unsigned int length);
 
 /**
  *  Obsługa przychodzących wiadomości na subskrybowane topici.
@@ -11,25 +11,48 @@ void callback(char* topic, byte* message, unsigned int length);
  *  \param message Treść wiadomości
  *  \param length Długość wiadomości
  */
-void callback(char* topic, byte* message, unsigned int length) {
+void callback(char *topic, byte *message, unsigned int length)
+{
+  uint8_t testTrials;
   Serial.println("[MQTT] Message arrived on topic: ");
   Serial.print(topic);
   Serial.print(". Message: ");
   String messageTemp;
-  
-  for (int i = 0; i < length; i++) {
+
+  for (int i = 0; i < length; i++)
+  {
     Serial.print((char)message[i]);
     messageTemp += (char)message[i];
   }
   Serial.println();
-  if(String(topic) == door_status_request) {
+  if (String(topic) == door_status_request)
+  {
     doorStatus();
-  } else 
-  if (String(topic) == door_permit && messageTemp == "1") {
+  }
+  else if (String(topic) == door_permit && messageTemp == "1")
+  {
     lockOpen();
-  } else
-  if (String(topic) == reader_read_request) {
-    startFastInventoryTest(1);
+  }
+  else if (String(topic) == reader_read_request)
+  {
+    testTrials = 0;
+    for (uint8_t i = 0; i < length; ++i)
+    {
+      testTrials += messageTemp[i] - '0';
+    }
+    startFastInventoryTest(testTrials);
+  }
+  else if (String(topic) == diagnostics_reader_temperature_request)
+  {
+    requestReaderTemperature();
+  }
+  else if (String(topic) == diagnostics_reader_info_request)
+  {
+    requestReaderInfo();
+  }
+  else if (String(topic) == diagnostics_reader_antenna_detection_request)
+  {
+    startAntennaDetection();
   }
 }
 

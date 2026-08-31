@@ -38,7 +38,19 @@ String door_status = location + "door/status";
 String reader_read_tags = location + "reader/read/tags";
 ///@}
 
-/** @name Topici diagonostyczne
+/** @name Topici diagonostyczne input
+ * 
+ */
+///@{
+/** Temperatura czytnika */
+String diagnostics_reader_temperature_request = location + "diagnostics/reader/temperature/request";
+/** Informacje o czytniku */
+String diagnostics_reader_info_request = location + "diagnostics/reader/info/request"; 
+/** Detekcja anten */
+String diagnostics_reader_antenna_detection_request = location + "diagnostics/reader/antennas/request";
+///@}
+
+/** @name Topici diagonostyczne output
  * 
  */
 ///@{

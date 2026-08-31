@@ -55,8 +55,8 @@ void setup() {
   espClient.setCACert(root_ca);
   client.setServer(mqtt_broker, mqtt_port);
 
-  // Wysłanie żądania o informacje o czytniku
-  requestReaderInfo();
+  // Jednorazowa konfiguracja czytnika przed pierwszą inwentaryzacją.
+  startReaderConfiguration();
 
   // Wybranie funkcji obsługującej wiadomości/żądania MQTT
   client.setCallback(callback);

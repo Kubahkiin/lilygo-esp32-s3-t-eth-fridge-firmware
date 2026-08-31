@@ -153,6 +153,9 @@ void reconnect() {
   client.subscribe(door_status_request.c_str());
   client.subscribe(door_permit.c_str());
   client.subscribe(reader_read_request.c_str());
+  client.subscribe(diagnostics_reader_temperature_request.c_str());
+  client.subscribe(diagnostics_reader_info_request.c_str());
+  client.subscribe(diagnostics_reader_antenna_detection_request.c_str());
 }
 
 /**

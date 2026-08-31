@@ -122,7 +122,10 @@ enum class PendingRequest {
   EnableAntennaCheck,
   ProbeAntenna,
   ConfigureAntennas,
-  SetConfigurationParameter,
+  DisableTagFocus,
+  SetQAndSession,
+  SetEpcMode,
+  ClearInventoryMask,
   StartFastInventory,
   StopFastInventory
 };
@@ -138,12 +141,25 @@ enum class FastInventoryState {
   Error
 };
 
-enum class FastConfigurationStep {
-  None,
+enum class ReaderConfigurationStep {
+  Idle,
+  ReaderInfo,
+  WorkMode,
+  ReadRegion,
+  SetRegion,
+  VerifyRegion,
+  ReadPower,
+  SetPower,
+  VerifyPower,
+  EnableAntennaCheck,
+  DetectAntennas,
+  ConfigureAntennas,
   DisableTagFocus,
-  QAndSession,
-  EpcMode,
-  ClearMask
+  SetQAndSession,
+  SetEpcMode,
+  ClearMask,
+  Completed,
+  Error
 };
 
 enum class ConfigurationCheck {
@@ -194,8 +210,9 @@ RfidReceiver rx;
 
 PendingRequest pendingRequest = PendingRequest::None;
 FastInventoryState fastInventoryState = FastInventoryState::Idle;
-FastConfigurationStep fastConfigurationStep =
-  FastConfigurationStep::None;
+ReaderConfigurationStep readerConfigurationStep =
+  ReaderConfigurationStep::Idle;
+bool readerConfigurationDispatching = false;
 
 uint32_t requestStartedMs = 0;
 uint32_t fastInventoryStartedMs = 0;
@@ -253,6 +270,13 @@ bool startTrackedRequest(PendingRequest request, uint8_t command, const uint8_t*
 bool finishTrackedRequest(PendingRequest expectedRequest);
 bool prepareResponse(const char* operationName, size_t responseLength, RfidResponseView& response);
 bool prepareSuccessfulResponse(const char* operationName, size_t responseLength, size_t minimumDataLength, RfidResponseView& response);
+bool startReaderConfiguration();
+bool startReaderConfigurationStep(ReaderConfigurationStep step);
+void continueReaderConfiguration(ReaderConfigurationStep expected, ReaderConfigurationStep next);
+void handleRegionConfigurationResult(ConfigurationCheck result);
+void handlePowerConfigurationResult(ConfigurationCheck result);
+void failReaderConfiguration(const char* reason);
+bool readerConfigurationIsActive();
 
 bool requestReaderInfo();
 bool handleReaderInfo(size_t responseLength);
@@ -329,7 +353,10 @@ void handleReaderRequest() {
         }
 
         if (handleReaderInfo(responseLength)) {
-          requestReaderTemperature();
+          continueReaderConfiguration(ReaderConfigurationStep::ReaderInfo,
+                                      ReaderConfigurationStep::WorkMode);
+        } else if (readerConfigurationStep == ReaderConfigurationStep::ReaderInfo) {
+          failReaderConfiguration("nie można odczytać informacji o czytniku");
         }
         break;
 
@@ -340,8 +367,8 @@ void handleReaderRequest() {
 
         handleReaderTemperature(responseLength);
 
-        // Temperature is optional on some models, so continue either way.
-        requestWorkMode();
+        // // Temperature is optional on some models, so continue either way.
+        // requestWorkMode();
         break;
 
       case CMD_GET_WORK_MODE: {
@@ -350,9 +377,10 @@ void handleReaderRequest() {
         }
 
         if (handleWorkMode(responseLength)) {
-          regionSetAttempts = 0;
-          powerSetAttempts = 0;
-          requestReadRegion();
+          continueReaderConfiguration(ReaderConfigurationStep::WorkMode,
+                                      ReaderConfigurationStep::ReadRegion);
+        } else if (readerConfigurationStep == ReaderConfigurationStep::WorkMode) {
+          failReaderConfiguration("czytnik nie pracuje w answering mode");
         }
         break;
       }
@@ -362,22 +390,7 @@ void handleReaderRequest() {
           break;
         }
 
-        const ConfigurationCheck result =
-          handleReadRegion(responseLength);
-
-        if (result == ConfigurationCheck::Matches) {
-          requestReadAntennaPower();
-        }
-        else if (result == ConfigurationCheck::NeedsUpdate) {
-          if (regionSetAttempts < MAX_CONFIG_SET_ATTEMPTS) {
-            ++regionSetAttempts;
-            requestSetRegion();
-          }
-          else {
-            Serial.println(
-              "[ERROR][RFID] Region nadal jest niezgodny po ustawieniu");
-          }
-        }
+        handleRegionConfigurationResult(handleReadRegion(responseLength));
         break;
       }
 
@@ -387,7 +400,10 @@ void handleReaderRequest() {
         }
 
         if (handleSetRegion(responseLength)) {
-          requestReadRegion();
+          continueReaderConfiguration(ReaderConfigurationStep::SetRegion,
+                                      ReaderConfigurationStep::VerifyRegion);
+        } else if (readerConfigurationStep == ReaderConfigurationStep::SetRegion) {
+          failReaderConfiguration("nie można ustawić regionu");
         }
         break;
 
@@ -396,22 +412,7 @@ void handleReaderRequest() {
           break;
         }
 
-        const ConfigurationCheck result =
-          handleReadAntennaPower(responseLength);
-
-        if (result == ConfigurationCheck::Matches) {
-          requestEnableAntennaCheck();
-        }
-        else if (result == ConfigurationCheck::NeedsUpdate) {
-          if (powerSetAttempts < MAX_CONFIG_SET_ATTEMPTS) {
-            ++powerSetAttempts;
-            requestSetRfPower();
-          }
-          else {
-            Serial.println(
-              "[ERROR][RFID] Moc nadal jest niezgodna po ustawieniu");
-          }
-        }
+        handlePowerConfigurationResult(handleReadAntennaPower(responseLength));
         break;
       }
 
@@ -421,7 +422,10 @@ void handleReaderRequest() {
         }
 
         if (handleSetRfPower(responseLength)) {
-          requestReadAntennaPower();
+          continueReaderConfiguration(ReaderConfigurationStep::SetPower,
+                                      ReaderConfigurationStep::VerifyPower);
+        } else if (readerConfigurationStep == ReaderConfigurationStep::SetPower) {
+          failReaderConfiguration("nie można ustawić mocy anten");
         }
         break;
 
@@ -431,7 +435,10 @@ void handleReaderRequest() {
         }
 
         if (handleEnableAntennaCheck(responseLength)) {
-          startAntennaDetection();
+          continueReaderConfiguration(ReaderConfigurationStep::EnableAntennaCheck,
+                                      ReaderConfigurationStep::DetectAntennas);
+        } else if (readerConfigurationStep == ReaderConfigurationStep::EnableAntennaCheck) {
+          failReaderConfiguration("nie można włączyć kontroli anten");
         }
         break;
 
@@ -468,69 +475,45 @@ void handleReaderRequest() {
         }
 
         // Błędny ACK konfiguracji ma zatrzymać automat zamiast zostawić go w Idle.
-        if (!handleConfigureAntennas(responseLength)) {
-          fastInventoryState = FastInventoryState::Error;
-        }
-        else if (!requestDisableTagFocus()) {
-          fastInventoryState = FastInventoryState::Error;
+        if (handleConfigureAntennas(responseLength)) {
+          continueReaderConfiguration(ReaderConfigurationStep::ConfigureAntennas,
+                                      ReaderConfigurationStep::DisableTagFocus);
+        } else if (readerConfigurationStep == ReaderConfigurationStep::ConfigureAntennas) {
+          failReaderConfiguration("nie można skonfigurować aktywnych anten");
         }
         break;
       }
 
       case CMD_SET_CFG: {
-        if (!finishTrackedRequest(PendingRequest::SetConfigurationParameter)) {
-          break;
+        const PendingRequest completed = pendingRequest;
+        bool success = false;
+        ReaderConfigurationStep expected = ReaderConfigurationStep::Idle;
+        ReaderConfigurationStep next = ReaderConfigurationStep::Error;
+
+        if (completed == PendingRequest::DisableTagFocus) {
+          expected = ReaderConfigurationStep::DisableTagFocus;
+          next = ReaderConfigurationStep::SetQAndSession;
+          success = finishTrackedRequest(completed) && handleDisableTagFocus(responseLength);
+        } else if (completed == PendingRequest::SetQAndSession) {
+          expected = ReaderConfigurationStep::SetQAndSession;
+          next = ReaderConfigurationStep::SetEpcMode;
+          success = finishTrackedRequest(completed) && handleSetQAndSession(responseLength);
+        } else if (completed == PendingRequest::SetEpcMode) {
+          expected = ReaderConfigurationStep::SetEpcMode;
+          next = ReaderConfigurationStep::ClearMask;
+          success = finishTrackedRequest(completed) && handleSetEpcMode(responseLength);
+        } else if (completed == PendingRequest::ClearInventoryMask) {
+          expected = ReaderConfigurationStep::ClearMask;
+          next = ReaderConfigurationStep::Completed;
+          success = finishTrackedRequest(completed) && handleClearInventoryMask(responseLength);
+        } else {
+          Serial.println("[ERROR][RFID] Nieoczekiwana odpowiedź konfiguracji 0xEA");
         }
 
-        switch (fastConfigurationStep) {
-          case FastConfigurationStep::DisableTagFocus:
-            if (!handleDisableTagFocus(responseLength)) {
-              fastConfigurationStep = FastConfigurationStep::None;
-              fastInventoryState = FastInventoryState::Error;
-            }
-            else if (!requestSetQAndSession()) {
-              fastInventoryState = FastInventoryState::Error;
-            }
-            break;
-
-          case FastConfigurationStep::QAndSession:
-            if (!handleSetQAndSession(responseLength)) {
-              fastConfigurationStep = FastConfigurationStep::None;
-              fastInventoryState = FastInventoryState::Error;
-            }
-            else if (!requestSetEpcMode()) {
-              fastInventoryState = FastInventoryState::Error;
-            }
-            break;
-
-          case FastConfigurationStep::EpcMode:
-            if (!handleSetEpcMode(responseLength)) {
-              fastConfigurationStep = FastConfigurationStep::None;
-              fastInventoryState = FastInventoryState::Error;
-            }
-            else if (!requestClearInventoryMask()) {
-              fastInventoryState = FastInventoryState::Error;
-            }
-            break;
-
-          case FastConfigurationStep::ClearMask:
-            if (!handleClearInventoryMask(responseLength)) {
-              fastConfigurationStep = FastConfigurationStep::None;
-              fastInventoryState = FastInventoryState::Error;
-              break;
-            }
-
-            fastConfigurationStep = FastConfigurationStep::None;
-
-            // Inwentaryzacja rozpocznie się dopiero po żądaniu MQTT.
-            Serial.println(
-              "[RFID] Konfiguracja zakończona; oczekiwanie na żądanie MQTT");
-            break;
-
-          case FastConfigurationStep::None:
-            Serial.println(
-              "[ERROR][RFID] Nieoczekiwana odpowiedź konfiguracji 0xEA");
-            break;
+        if (success) {
+          continueReaderConfiguration(expected, next);
+        } else if (readerConfigurationStep == expected) {
+          failReaderConfiguration("błąd parametru fast inventory");
         }
         break;
       }
@@ -600,12 +583,8 @@ void handleReaderRequest() {
       Serial.println(
         "[ERROR][RFID] Nie można potwierdzić stanu fast inventory");
     }
-    else if (timedOutRequest == PendingRequest::ConfigureAntennas ||
-             timedOutRequest ==
-               PendingRequest::SetConfigurationParameter) {
-      // Timeout 0x3F lub 0xEA również kończy sekwencję konfiguracji błędem.
-      fastConfigurationStep = FastConfigurationStep::None;
-      fastInventoryState = FastInventoryState::Error;
+    else if (readerConfigurationIsActive()) {
+      failReaderConfiguration("timeout odpowiedzi");
     }
   }
 
@@ -801,6 +780,15 @@ bool receiveFrame(size_t& responseLength) {
 
 // sends requests with cmd codes to the rfid reader
 bool startTrackedRequest(PendingRequest request, uint8_t command, const uint8_t* data, size_t dataLength) {
+
+  const bool configurationOwnsRequest =
+    readerConfigurationDispatching ||
+    (readerConfigurationStep == ReaderConfigurationStep::DetectAntennas &&
+     request == PendingRequest::ProbeAntenna);
+  if (readerConfigurationIsActive() && !configurationOwnsRequest) {
+    Serial.println("[ERROR][RFID] Trwa konfiguracja startowa czytnika");
+    return false;
+  }
 
   if (pendingRequest != PendingRequest::None) {
     Serial.print("\n[ERROR][RFID] Inna komenda nadal oczekuje");
@@ -1385,17 +1373,14 @@ void finishAntennaDetection() {
   if (activeAntennaMask == 0) {
     Serial.println(
       "[ERROR][RFID] Nie wykryto żadnej aktywnej anteny");
-    fastInventoryState = FastInventoryState::Error;
+    if (readerConfigurationStep == ReaderConfigurationStep::DetectAntennas) {
+      failReaderConfiguration("nie wykryto aktywnej anteny");
+    }
     return;
   }
 
-  fastConfigurationStep = FastConfigurationStep::None;
-
-  if (!requestConfigureAntennas()) {
-    Serial.println(
-      "[ERROR][RFID] Nie rozpoczęto konfiguracji aktywnych anten");
-    fastInventoryState = FastInventoryState::Error;
-  }
+  continueReaderConfiguration(ReaderConfigurationStep::DetectAntennas,
+                              ReaderConfigurationStep::ConfigureAntennas);
 }
 
 void printAntennaPorts(const char* label, uint16_t mask) {
@@ -1467,15 +1452,13 @@ bool requestDisableTagFocus() {
   };
 
   if (!startTrackedRequest(
-        PendingRequest::SetConfigurationParameter,
+        PendingRequest::DisableTagFocus,
         CMD_SET_CFG,
         data,
         sizeof(data))) {
     return false;
   }
 
-  fastConfigurationStep =
-    FastConfigurationStep::DisableTagFocus;
   return true;
 }
 
@@ -1502,14 +1485,13 @@ bool requestSetQAndSession() {
   };
 
   if (!startTrackedRequest(
-        PendingRequest::SetConfigurationParameter,
+        PendingRequest::SetQAndSession,
         CMD_SET_CFG,
         data,
         sizeof(data))) {
     return false;
   }
 
-  fastConfigurationStep = FastConfigurationStep::QAndSession;
   return true;
 }
 
@@ -1536,14 +1518,13 @@ bool requestSetEpcMode() {
   };
 
   if (!startTrackedRequest(
-        PendingRequest::SetConfigurationParameter,
+        PendingRequest::SetEpcMode,
         CMD_SET_CFG,
         data,
         sizeof(data))) {
     return false;
   }
 
-  fastConfigurationStep = FastConfigurationStep::EpcMode;
   return true;
 }
 
@@ -1571,14 +1552,13 @@ bool requestClearInventoryMask() {
   };
 
   if (!startTrackedRequest(
-        PendingRequest::SetConfigurationParameter,
+        PendingRequest::ClearInventoryMask,
         CMD_SET_CFG,
         data,
         sizeof(data))) {
     return false;
   }
 
-  fastConfigurationStep = FastConfigurationStep::ClearMask;
   return true;
 }
 
@@ -2345,5 +2325,7 @@ void printFastInventoryCsv() {
   Serial.println("[RFID] TAG_CSV_END");
 }
 
+
+#include "reader_configuration.h"
 
 #endif
