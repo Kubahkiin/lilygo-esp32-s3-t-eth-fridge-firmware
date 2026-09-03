@@ -1,0 +1,718 @@
+#!/usr/bin/env python3
+"""Tworzy wykres liczby anten, które wykryły poszczególne tagi RFID."""
+
+from __future__ import annotations
+
+import csv
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+
+
+CSV_DATA = """
+epc,antenna_count,A1,A2,A4,A5,A6,A7,A10,A11,A12,A13,A14,A16
+0050,1,0,0,0,0,0,0,1,0,0,0,0,0
+0051,3,0,0,0,0,1,0,1,1,0,0,0,0
+0052,5,1,0,1,0,0,1,1,1,0,0,0,0
+0053,1,0,0,0,0,0,0,0,1,0,0,0,0
+0054,1,0,0,0,0,0,0,0,1,0,0,0,0
+0055,5,0,0,0,0,0,1,1,0,1,1,1,0
+0056,3,0,1,0,0,0,0,1,1,0,0,0,0
+0057,9,0,1,1,1,1,1,0,1,1,1,0,1
+0058,5,1,1,0,0,0,1,0,1,0,1,0,0
+0059,5,0,0,1,0,0,1,0,1,1,1,0,0
+0060,2,0,0,0,0,1,0,1,0,0,0,0,0
+0061,7,0,0,1,0,1,1,1,1,1,1,0,0
+0062,5,0,0,0,0,1,1,1,1,1,0,0,0
+0063,1,0,0,0,0,0,0,0,1,0,0,0,0
+0064,1,0,0,0,0,0,0,0,1,0,0,0,0
+0065,3,0,0,0,1,1,0,0,0,0,0,1,0
+0066,5,1,0,0,1,0,1,0,1,1,0,0,0
+0067,8,1,1,1,1,1,1,1,0,0,0,0,1
+0068,8,1,1,1,1,0,1,0,1,0,0,1,1
+0069,5,0,0,1,0,0,1,0,1,1,1,0,0
+0070,4,1,1,1,0,1,0,0,0,0,0,0,0
+0071,5,1,0,1,1,1,1,0,0,0,0,0,0
+0072,6,1,1,1,1,1,1,0,0,0,0,0,0
+0073,6,1,1,1,1,1,1,0,0,0,0,0,0
+0074,4,1,1,0,1,0,1,0,0,0,0,0,0
+0075,5,1,1,1,1,1,0,0,0,0,0,0,0
+0076,6,1,1,1,1,1,1,0,0,0,0,0,0
+0077,6,1,1,1,1,0,1,0,1,0,0,0,0
+0078,5,1,1,1,1,0,0,0,0,0,0,1,0
+0079,5,1,1,1,1,0,1,0,0,0,0,0,0
+0080,4,1,1,1,1,0,0,0,0,0,0,0,0
+0081,9,1,1,1,1,1,1,0,1,0,0,1,1
+0082,6,1,1,1,1,1,1,0,0,0,0,0,0
+0083,7,1,1,0,1,1,1,0,1,0,0,1,0
+0084,5,1,1,1,1,0,1,0,0,0,0,0,0
+0085,6,1,1,1,1,1,0,0,1,0,0,0,0
+0086,8,1,1,1,1,1,1,0,1,0,1,0,0
+0087,2,1,0,1,0,0,0,0,0,0,0,0,0
+0088,7,1,0,1,1,0,1,0,1,1,0,1,0
+0089,4,1,1,1,1,0,0,0,0,0,0,0,0
+0090,4,1,0,0,0,1,0,1,1,0,0,0,0
+0091,6,1,1,1,1,1,1,0,0,0,0,0,0
+0092,3,0,0,0,1,0,1,0,1,0,0,0,0
+0093,4,0,0,1,0,1,1,0,1,0,0,0,0
+0094,2,0,0,0,0,0,1,0,1,0,0,0,0
+0095,4,1,1,0,1,1,0,0,0,0,0,0,0
+0096,3,0,1,0,1,1,0,0,0,0,0,0,0
+0097,4,1,0,1,1,0,1,0,0,0,0,0,0
+0098,4,1,1,1,0,0,1,0,0,0,0,0,0
+0099,5,1,0,1,1,0,1,0,1,0,0,0,0
+0100,7,1,1,1,1,1,0,1,1,0,0,0,0
+0101,9,1,1,1,1,1,1,0,1,1,1,0,0
+0102,4,1,0,0,1,1,1,0,0,0,0,0,0
+0103,8,1,1,1,1,1,1,0,1,0,1,0,0
+0104,2,0,0,0,0,0,1,0,1,0,0,0,0
+0105,5,1,1,0,1,1,0,1,0,0,0,0,0
+0106,6,0,1,1,1,1,1,0,1,0,0,0,0
+0107,5,1,0,1,1,0,1,0,1,0,0,0,0
+0108,9,1,0,1,1,1,1,0,1,1,1,0,1
+0109,6,1,1,0,1,1,0,0,1,0,1,0,0
+0110,4,0,0,0,0,0,0,1,1,1,0,1,0
+0111,5,0,0,0,0,0,0,1,1,1,1,1,0
+0112,6,0,0,0,0,0,0,1,1,1,1,1,1
+0113,4,0,0,0,0,0,0,0,1,1,1,0,1
+0114,3,0,0,0,0,0,0,0,1,0,1,0,1
+0115,2,0,0,0,0,0,0,0,0,0,1,1,0
+0116,2,0,0,0,0,0,0,0,0,1,0,1,0
+0117,4,0,0,0,0,0,0,1,0,1,1,1,0
+0118,5,0,0,0,0,0,0,0,1,1,1,1,1
+0119,7,0,1,1,0,0,1,0,1,1,1,0,1
+0120,2,0,0,0,0,0,0,1,0,1,0,0,0
+0121,4,0,0,0,0,0,0,1,1,1,1,0,0
+0122,5,1,0,1,0,0,1,0,1,1,0,0,0
+0123,2,0,0,0,0,0,0,0,1,1,0,0,0
+0124,1,0,0,0,0,0,0,0,1,0,0,0,0
+0125,2,0,0,0,0,0,0,1,0,0,0,1,0
+0126,5,0,0,0,1,1,0,1,0,1,0,1,0
+0127,4,0,0,0,0,0,1,0,1,0,1,0,1
+0128,4,0,0,0,0,0,1,0,1,0,1,1,0
+0129,4,0,0,0,0,0,1,0,1,1,1,0,0
+0130,3,0,0,0,0,0,0,0,0,1,1,1,0
+0131,9,1,1,0,0,0,1,1,1,1,1,1,1
+0132,5,0,0,0,0,0,0,0,1,1,1,1,1
+0133,4,0,0,0,0,0,0,0,1,1,0,1,1
+0134,4,0,0,0,0,0,0,0,0,1,1,1,1
+0135,6,1,0,0,0,0,0,0,1,1,1,1,1
+0136,4,0,0,0,0,0,0,1,0,1,0,1,1
+0137,5,0,0,0,1,0,0,1,0,0,1,1,1
+0138,10,1,1,1,0,1,1,1,0,1,1,1,1
+0139,5,0,1,0,0,0,0,1,0,0,1,1,1
+0140,6,0,0,0,0,0,0,1,1,1,1,1,1
+0141,6,0,0,0,0,0,0,1,1,1,1,1,1
+0142,6,0,0,0,0,0,0,1,1,1,1,1,1
+0143,5,0,0,0,0,0,0,0,1,1,1,1,1
+0144,3,0,0,0,0,0,0,0,0,1,1,0,1
+0145,4,0,0,0,0,0,0,1,0,1,1,0,1
+0146,6,0,0,0,0,0,0,1,1,1,1,1,1
+0147,5,0,0,0,1,0,0,1,1,0,1,1,0
+0148,5,0,0,1,0,0,0,0,1,0,1,1,1
+0149,3,0,0,0,0,0,0,0,1,0,1,0,1
+"""
+
+# Ustaw False, jeżeli wykres ma zostać tylko zapisany, bez otwierania okna.
+SHOW_CHART = True
+
+MAX_ANTENNAS = 16
+FIRST_TAG_NUMBER = 50
+TAGS_PER_SHELF = 20
+SHELF_COUNT = 5
+SHELF_COLORS = ("#2563eb", "#16a34a", "#fac44a", "#9333ea", "#aa6767")
+SHELVES = tuple(
+    (
+        f"Półka {shelf_index + 1}",
+        FIRST_TAG_NUMBER + shelf_index * TAGS_PER_SHELF,
+        FIRST_TAG_NUMBER + (shelf_index + 1) * TAGS_PER_SHELF - 1,
+        SHELF_COLORS[shelf_index % len(SHELF_COLORS)],
+    )
+    for shelf_index in range(SHELF_COUNT)
+)
+TOTAL_TAG_COUNT = SHELF_COUNT * TAGS_PER_SHELF
+LAST_TAG_NUMBER = FIRST_TAG_NUMBER + TOTAL_TAG_COUNT - 1
+
+OUTPUT_PATH = (
+    Path(__file__).resolve().parent / "output" / "tag_coverage.png"
+)
+ANTENNA_MATRIX_OUTPUT_PATH = (
+    Path(__file__).resolve().parent
+    / "output"
+    / "antenna_tag_matrix.png"
+)
+ANTENNA_CHART_OUTPUT_DIR = (
+    Path(__file__).resolve().parent / "output" / "antennas"
+)
+EPC_PATTERN = re.compile(r"[0-9a-f]{2,}", re.IGNORECASE)
+ANTENNA_COLUMN_PATTERN = re.compile(r"A(\d+)", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class TagDetection:
+    antenna_count: int
+    antennas: frozenset[int] | None
+
+
+def parse_csv_row(line: str) -> list[str]:
+    return [cell.strip() for cell in next(csv.reader([line]))]
+
+
+def parse_csv_data(
+    csv_data: str,
+) -> tuple[tuple[int, ...], dict[str, TagDetection]]:
+    """Parsuje dynamiczne kolumny A1, A2... wklejone do CSV_DATA."""
+    lines = [line.strip() for line in csv_data.splitlines() if line.strip()]
+    header_index: int | None = None
+    header: list[str] = []
+
+    for index, line in enumerate(lines):
+        cells = parse_csv_row(line)
+        if (
+            len(cells) >= 2
+            and cells[0].lower() == "epc"
+            and cells[1].lower() == "antenna_count"
+        ):
+            header_index = index
+            header = cells
+
+    if header_index is None:
+        raise ValueError(
+            "Brak nagłówka CSV zaczynającego się od epc,antenna_count."
+        )
+
+    antenna_numbers: list[int] = []
+    for column_name in header[2:]:
+        match = ANTENNA_COLUMN_PATTERN.fullmatch(column_name)
+        if not match:
+            raise ValueError(
+                f"Nieprawidłowa kolumna anteny w CSV: {column_name}."
+            )
+        antenna_number = int(match.group(1))
+        if not 1 <= antenna_number <= MAX_ANTENNAS:
+            raise ValueError(
+                f"Numer anteny poza zakresem 1–{MAX_ANTENNAS}: "
+                f"{antenna_number}."
+            )
+        if antenna_number in antenna_numbers:
+            raise ValueError(
+                f"Kolumna anteny A{antenna_number} występuje więcej niż raz."
+            )
+        antenna_numbers.append(antenna_number)
+
+    detections_by_epc: dict[str, TagDetection] = {}
+    for line in lines[header_index + 1 :]:
+        if "TAG_CSV_END" in line:
+            break
+
+        cells = parse_csv_row(line)
+        if not cells:
+            continue
+        epc = cells[0].upper()
+        if not EPC_PATTERN.fullmatch(epc):
+            continue
+        if len(cells) != len(header):
+            raise ValueError(
+                f"Wiersz EPC {epc} ma {len(cells)} kolumn zamiast "
+                f"{len(header)}."
+            )
+
+        try:
+            antenna_count = int(cells[1])
+        except ValueError as exc:
+            raise ValueError(
+                f"EPC {epc} ma nieprawidłową liczbę anten: {cells[1]}."
+            ) from exc
+        if not 0 <= antenna_count <= MAX_ANTENNAS:
+            raise ValueError(
+                f"EPC {epc} ma nieprawidłową liczbę anten: {antenna_count}."
+            )
+
+        detected_antennas: frozenset[int] | None = None
+        if antenna_numbers:
+            flags = cells[2:]
+            if any(flag not in {"0", "1"} for flag in flags):
+                raise ValueError(
+                    f"EPC {epc} ma flagę anteny inną niż 0 lub 1."
+                )
+            detected_antennas = frozenset(
+                antenna_number
+                for antenna_number, flag in zip(antenna_numbers, flags)
+                if flag == "1"
+            )
+            if antenna_count != len(detected_antennas):
+                raise ValueError(
+                    f"EPC {epc}: antenna_count={antenna_count}, ale "
+                    f"kolumny A* wskazują {len(detected_antennas)} anten."
+                )
+
+        detections_by_epc[epc] = TagDetection(
+            antenna_count=antenna_count,
+            antennas=detected_antennas,
+        )
+
+    if not detections_by_epc:
+        raise ValueError(
+            "Brak danych. Wklej wiersze CSV do zmiennej CSV_DATA "
+            "na początku skryptu."
+        )
+    return tuple(antenna_numbers), detections_by_epc
+
+
+def epc_to_decimal_tag_number(epc: str) -> int | None:
+    """Interpretuje np. 000...0050 jako numer taga 50, nie 0x50."""
+    significant_digits = epc.lstrip("0") or "0"
+    if not significant_digits.isdecimal():
+        return None
+    return int(significant_digits, 10)
+
+
+def build_tag_detections(
+    detections_by_epc: dict[str, TagDetection],
+) -> tuple[dict[int, TagDetection], list[str]]:
+    """Buduje skonfigurowany zakres tagów, uzupełniając braki zerami."""
+    tag_detections = {
+        tag_number: TagDetection(antenna_count=0, antennas=frozenset())
+        for _, first_tag, last_tag, _ in SHELVES
+        for tag_number in range(first_tag, last_tag + 1)
+    }
+    ignored_epcs: list[str] = []
+    epc_by_tag_number: dict[int, str] = {}
+
+    for epc, detection in detections_by_epc.items():
+        tag_number = epc_to_decimal_tag_number(epc)
+        if tag_number not in tag_detections:
+            ignored_epcs.append(epc)
+            continue
+
+        previous_epc = epc_by_tag_number.get(tag_number)
+        if previous_epc is not None and previous_epc != epc:
+            raise ValueError(
+                f"EPC {previous_epc} i {epc} wskazują ten sam tag "
+                f"{tag_number}."
+            )
+        epc_by_tag_number[tag_number] = epc
+        tag_detections[tag_number] = detection
+
+    return tag_detections, ignored_epcs
+
+
+def create_charts(
+    tag_detections: dict[int, TagDetection],
+    antenna_numbers: tuple[int, ...],
+) -> None:
+    try:
+        import matplotlib
+    except ImportError as exc:
+        raise RuntimeError(
+            "Brakuje pakietu matplotlib. Uruchom: "
+            "python -m pip install -r tools/requirements.txt"
+        ) from exc
+
+    if not SHOW_CHART:
+        matplotlib.use("Agg")
+
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import ListedColormap
+    from matplotlib.patches import Patch
+    from matplotlib.ticker import MaxNLocator
+
+    coverage_figure, axes_grid = plt.subplots(
+        nrows=SHELF_COUNT,
+        ncols=1,
+        figsize=(15, 1.5 + SHELF_COUNT * 3.4),
+        sharey=True,
+        squeeze=False,
+        constrained_layout=True,
+    )
+    axes = axes_grid[:, 0]
+    coverage_figure.suptitle(
+        "Niezawodne pokrycie tagów RFID przez anteny",
+        fontsize=16,
+        fontweight="bold",
+    )
+    coverage_figure.supxlabel("Numer taga")
+    coverage_figure.supylabel(
+        "Liczba anten, które wykryły tag w każdej próbie"
+    )
+
+    largest_value = max(
+        (
+            detection.antenna_count
+            for detection in tag_detections.values()
+        ),
+        default=0,
+    )
+    axis_maximum = max(1, len(antenna_numbers), largest_value) + 1
+    uncovered_tag_numbers = {
+        tag_number
+        for tag_number, detection in tag_detections.items()
+        if detection.antenna_count == 0
+    }
+
+    for axis, (shelf_name, first_tag, last_tag, shelf_color) in zip(
+        axes, SHELVES
+    ):
+        tag_numbers = list(range(first_tag, last_tag + 1))
+        values = [
+            tag_detections[tag_number].antenna_count
+            for tag_number in tag_numbers
+        ]
+        colors = [
+            shelf_color if value > 0 else "#d1d5db" for value in values
+        ]
+        for tag_number in tag_numbers:
+            if tag_number in uncovered_tag_numbers:
+                axis.axvspan(
+                    tag_number - 0.45,
+                    tag_number + 0.45,
+                    facecolor="#fee2e2",
+                    edgecolor="#b91c1c",
+                    hatch="///",
+                    linewidth=0.9,
+                    alpha=0.55,
+                    zorder=0,
+                )
+        bars = axis.bar(
+            tag_numbers,
+            values,
+            width=0.72,
+            color=colors,
+            edgecolor="#334155",
+            linewidth=0.7,
+        )
+
+        axis.set_title(f"{shelf_name}: tagi {first_tag}–{last_tag}")
+        axis.set_xticks(tag_numbers)
+        for tick_label, tag_number in zip(
+            axis.get_xticklabels(),
+            tag_numbers,
+        ):
+            if tag_number in uncovered_tag_numbers:
+                tick_label.set_color("#b91c1c")
+                tick_label.set_fontweight("bold")
+        axis.set_ylim(0, axis_maximum)
+        axis.yaxis.set_major_locator(MaxNLocator(integer=True))
+        axis.grid(axis="y", linestyle="--", alpha=0.35)
+        axis.set_axisbelow(True)
+
+        for bar, value in zip(bars, values):
+            label_y = value + 0.2 if value > 0 else 0.2
+            axis.text(
+                bar.get_x() + bar.get_width() / 2,
+                label_y,
+                str(value),
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                fontweight="bold",
+                color="#111827" if value > 0 else "#b91c1c",
+            )
+
+    if uncovered_tag_numbers:
+        axes[0].legend(
+            handles=[
+                Patch(
+                    facecolor="#fee2e2",
+                    edgecolor="#b91c1c",
+                    hatch="///",
+                    label="Brak anteny niezawodnej",
+                )
+            ],
+            loc="upper right",
+        )
+
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    coverage_figure.savefig(OUTPUT_PATH, dpi=180, bbox_inches="tight")
+    print(f"Wykres zapisany: {OUTPUT_PATH.resolve()}")
+
+    matrix_figure = None
+    if antenna_numbers:
+        tag_numbers = [
+            tag_number
+            for _, first_tag, last_tag, _ in SHELVES
+            for tag_number in range(first_tag, last_tag + 1)
+        ]
+        detection_matrix = [
+            [
+                int(
+                    tag_detections[tag_number].antennas is not None
+                    and antenna_number
+                    in tag_detections[tag_number].antennas
+                )
+                for tag_number in tag_numbers
+            ]
+            for antenna_number in antenna_numbers
+        ]
+        detection_color_map = ListedColormap(["#e5e7eb", "#f97316"])
+
+        matrix_height = max(4.5, 2.5 + len(antenna_numbers) * 0.5)
+        matrix_width = max(16, len(tag_numbers) * 0.32)
+        matrix_figure, matrix_axis = plt.subplots(
+            figsize=(matrix_width, matrix_height),
+            constrained_layout=True,
+        )
+        matrix_axis.imshow(
+            detection_matrix,
+            aspect="auto",
+            interpolation="nearest",
+            cmap=detection_color_map,
+            vmin=0,
+            vmax=1,
+        )
+        matrix_axis.set_title(
+            "Tagi wykryte przez anteny w każdej próbie",
+            fontsize=15,
+            fontweight="bold",
+        )
+        matrix_axis.set_xlabel("Numer taga")
+        matrix_axis.set_ylabel("Antena")
+        matrix_axis.set_xticks(range(len(tag_numbers)))
+        matrix_axis.set_xticklabels(tag_numbers, fontsize=8)
+        for tick_label, tag_number in zip(
+            matrix_axis.get_xticklabels(),
+            tag_numbers,
+        ):
+            if tag_number in uncovered_tag_numbers:
+                tick_label.set_color("#b91c1c")
+                tick_label.set_fontweight("bold")
+        matrix_axis.set_yticks(range(len(antenna_numbers)))
+        matrix_axis.set_yticklabels(
+            [f"A{number}" for number in antenna_numbers]
+        )
+        for shelf_boundary in range(
+            TAGS_PER_SHELF,
+            len(tag_numbers),
+            TAGS_PER_SHELF,
+        ):
+            matrix_axis.axvline(
+                shelf_boundary - 0.5,
+                color="#0f172a",
+                linewidth=2,
+            )
+        for column_index, tag_number in enumerate(tag_numbers):
+            if tag_number in uncovered_tag_numbers:
+                matrix_axis.axvspan(
+                    column_index - 0.5,
+                    column_index + 0.5,
+                    facecolor="#fee2e2",
+                    edgecolor="#b91c1c",
+                    hatch="///",
+                    linewidth=1,
+                    alpha=0.4,
+                )
+        matrix_axis.set_xticks(
+            [index - 0.5 for index in range(1, len(tag_numbers))],
+            minor=True,
+        )
+        matrix_axis.set_yticks(
+            [index - 0.5 for index in range(1, len(antenna_numbers))],
+            minor=True,
+        )
+        matrix_axis.grid(
+            which="minor",
+            color="#ffffff",
+            linewidth=0.6,
+        )
+        matrix_axis.tick_params(
+            which="minor",
+            bottom=False,
+            left=False,
+        )
+        matrix_axis.legend(
+            handles=[
+                Patch(
+                    color="#f97316",
+                    label="Wykryty w każdej próbie",
+                ),
+                Patch(
+                    color="#e5e7eb",
+                    label="Pominięty w co najmniej jednej próbie",
+                ),
+                Patch(
+                    facecolor="#fee2e2",
+                    edgecolor="#b91c1c",
+                    hatch="///",
+                    label="Brak anteny niezawodnej",
+                ),
+            ],
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.12),
+            ncol=3,
+        )
+
+        ANTENNA_MATRIX_OUTPUT_PATH.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+        matrix_figure.savefig(
+            ANTENNA_MATRIX_OUTPUT_PATH,
+            dpi=180,
+            bbox_inches="tight",
+        )
+        print(
+            "Macierz anten zapisana: "
+            f"{ANTENNA_MATRIX_OUTPUT_PATH.resolve()}"
+        )
+
+        ANTENNA_CHART_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        for old_chart in ANTENNA_CHART_OUTPUT_DIR.glob(
+            "antenna_A*_tags.png"
+        ):
+            old_chart.unlink()
+
+        for antenna_number in antenna_numbers:
+            detected_tag_count = sum(
+                detection.antennas is not None
+                and antenna_number in detection.antennas
+                for detection in tag_detections.values()
+            )
+            antenna_figure, antenna_axes_grid = plt.subplots(
+                nrows=SHELF_COUNT,
+                ncols=1,
+                figsize=(15, 1.5 + SHELF_COUNT * 2.1),
+                squeeze=False,
+                constrained_layout=True,
+            )
+            antenna_axes = antenna_axes_grid[:, 0]
+            antenna_figure.suptitle(
+                f"Antena A{antenna_number}: niezawodnie wykryte tagi "
+                f"({detected_tag_count}/{TOTAL_TAG_COUNT})",
+                fontsize=15,
+                fontweight="bold",
+            )
+            antenna_figure.supxlabel("Numer taga")
+
+            for axis, (
+                shelf_name,
+                first_tag,
+                last_tag,
+                _,
+            ) in zip(antenna_axes, SHELVES):
+                shelf_tag_numbers = list(
+                    range(first_tag, last_tag + 1)
+                )
+                shelf_values = [
+                    int(
+                        tag_detections[tag_number].antennas is not None
+                        and antenna_number
+                        in tag_detections[tag_number].antennas
+                    )
+                    for tag_number in shelf_tag_numbers
+                ]
+                axis.imshow(
+                    [shelf_values],
+                    aspect="auto",
+                    interpolation="nearest",
+                    cmap=detection_color_map,
+                    vmin=0,
+                    vmax=1,
+                    extent=(
+                        first_tag - 0.5,
+                        last_tag + 0.5,
+                        0,
+                        1,
+                    ),
+                )
+                axis.set_title(
+                    f"{shelf_name}: tagi {first_tag}–{last_tag}"
+                )
+                axis.set_xticks(shelf_tag_numbers)
+                axis.set_yticks([])
+
+                for tag_number, detected in zip(
+                    shelf_tag_numbers,
+                    shelf_values,
+                ):
+                    axis.text(
+                        tag_number,
+                        0.5,
+                        str(detected),
+                        ha="center",
+                        va="center",
+                        fontsize=9,
+                        fontweight="bold",
+                        color="#ffffff" if detected else "#475569",
+                    )
+
+            antenna_axes[-1].legend(
+                handles=[
+                    Patch(
+                        color="#f97316",
+                        label="Każda próba (1)",
+                    ),
+                    Patch(
+                        color="#e5e7eb",
+                        label="Co najmniej jeden brak (0)",
+                    ),
+                ],
+                loc="upper center",
+                bbox_to_anchor=(0.5, -0.35),
+                ncol=2,
+            )
+            antenna_output_path = (
+                ANTENNA_CHART_OUTPUT_DIR
+                / f"antenna_A{antenna_number:02d}_tags.png"
+            )
+            antenna_figure.savefig(
+                antenna_output_path,
+                dpi=180,
+                bbox_inches="tight",
+            )
+            plt.close(antenna_figure)
+
+        print(
+            f"Wykresy poszczególnych anten ({len(antenna_numbers)}) "
+            f"zapisane w: {ANTENNA_CHART_OUTPUT_DIR.resolve()}"
+        )
+    else:
+        print(
+            "CSV ma stary format bez kolumn A1, A2... "
+            "Pomijam wykres anten; wklej nowy wynik z ESP32.",
+            file=sys.stderr,
+        )
+
+    if SHOW_CHART:
+        plt.show()
+    plt.close(coverage_figure)
+    if matrix_figure is not None:
+        plt.close(matrix_figure)
+
+
+def main() -> int:
+    try:
+        antenna_numbers, detections_by_epc = parse_csv_data(CSV_DATA)
+        tag_detections, ignored_epcs = build_tag_detections(
+            detections_by_epc
+        )
+
+        detected_tag_count = sum(
+            detection.antenna_count > 0
+            for detection in tag_detections.values()
+        )
+        print(
+            f"Wykryte tagi z zakresu "
+            f"{FIRST_TAG_NUMBER}–{LAST_TAG_NUMBER}: "
+            f"{detected_tag_count}/{TOTAL_TAG_COUNT}"
+        )
+        if ignored_epcs:
+            print(
+                f"Pominięte EPC spoza zakresu "
+                f"{FIRST_TAG_NUMBER}–{LAST_TAG_NUMBER} "
+                "lub zawierające A–F: "
+                + ", ".join(ignored_epcs),
+                file=sys.stderr,
+            )
+
+        create_charts(tag_detections, antenna_numbers)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"Błąd: {exc}", file=sys.stderr)
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

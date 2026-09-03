@@ -1,6 +1,9 @@
 #ifndef _CALLBACK_H_
 #define _CALLBACK_H_
 
+#include <string>
+#include <iostream>
+
 void callback(char *topic, byte *message, unsigned int length);
 
 /**
@@ -35,11 +38,7 @@ void callback(char *topic, byte *message, unsigned int length)
   }
   else if (String(topic) == reader_read_request)
   {
-    testTrials = 0;
-    for (uint8_t i = 0; i < length; ++i)
-    {
-      testTrials += messageTemp[i] - '0';
-    }
+    testTrials = static_cast<uint8_t>(messageTemp.toInt());
     startFastInventoryTest(testTrials);
   }
   else if (String(topic) == diagnostics_reader_temperature_request)
