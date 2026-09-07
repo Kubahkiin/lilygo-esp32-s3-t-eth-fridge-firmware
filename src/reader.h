@@ -25,7 +25,6 @@ unsigned int uiCrc16(unsigned char const *pucY, unsigned char ucX) {
   return uiCrcValue;
 }
 ////////////////////////////////////////////////////////
-// Test repo
 // Constants ///////////////////////////////////////////
 // Broadcast address - 0xFF, default address - 0x00
 constexpr uint8_t ADDRESS = 0xFF;
@@ -35,16 +34,11 @@ constexpr uint32_t RFID_BAUD_RATE = 115200; // 115200;
 constexpr size_t RFID_RX_BUFFER_SIZE = 4096;
 constexpr uint8_t ANTENNA_PORT_COUNT = 16;
 constexpr uint32_t FAST_INVENTORY_TIME_MS = 5000;
-// Liczbę prób można bezpiecznie zmieniać także na wartości większe niż 255.
-constexpr uint32_t FAST_INVENTORY_TRIAL_COUNT = 5;
-constexpr uint32_t FAST_INVENTORY_TRIAL_PAUSE_MS = 5000;
 constexpr uint32_t FAST_INVENTORY_DRAIN_QUIET_MS = 50;
 constexpr uint32_t FAST_INVENTORY_DRAIN_MAX_MS = 500;
 constexpr uint8_t MAX_RX_FRAMES_PER_LOOP = 32;
 constexpr uint8_t FAST_INVENTORY_TARGET = 0x00; // Target A
 constexpr size_t MAX_FAST_INVENTORY_TAGS = 160;
-// Agregat przechowuje unię EPC ze wszystkich prób, więc ma większy limit.
-constexpr size_t MAX_FAST_INVENTORY_TEST_TAGS = 256;
 constexpr size_t MAX_FAST_EPC_LENGTH = 0x3F;
 constexpr uint8_t RFID_POWER_DBM = 33;
 constexpr uint8_t MAX_CONFIG_SET_ATTEMPTS = 1;
@@ -63,9 +57,6 @@ constexpr uint8_t TAG_FOCUS = 0x00;
 static_assert(
   ANTENNA_PORT_COUNT > 0 && ANTENNA_PORT_COUNT <= 16,
   "Antenna masks support from 1 to 16 ports");
-static_assert(
-  FAST_INVENTORY_TRIAL_COUNT > 0,
-  "Fast inventory requires at least one trial");
 
 constexpr uint16_t ALL_ANTENNA_PORTS_MASK =
   static_cast<uint16_t>(
@@ -136,8 +127,6 @@ enum class FastInventoryState {
   Running,
   Stopping,
   Draining,
-  // Osobny stan gwarantuje pełną przerwę między zakończonymi próbami.
-  WaitingBetweenTrials,
   Error
 };
 
@@ -192,18 +181,6 @@ struct RfidResponseView {
 struct FastInventoryTag {
   uint8_t epc[MAX_FAST_EPC_LENGTH] = {};
   uint8_t epcLength = 0;
-  uint16_t antennaMask = 0;
-  uint32_t readCount = 0;
-};
-
-// Wynik całej serii; reliableAntennaMask jest przecięciem masek ze wszystkich prób.
-struct FastInventoryTestTag {
-  uint8_t epc[MAX_FAST_EPC_LENGTH] = {};
-  uint8_t epcLength = 0;
-  uint16_t reliableAntennaMask = 0;
-  uint16_t anyAntennaMask = 0;
-  uint32_t detectedTrialCount = 0;
-  uint32_t totalReadCount = 0;
 };
 
 RfidReceiver rx;
@@ -218,7 +195,6 @@ uint32_t requestStartedMs = 0;
 uint32_t fastInventoryStartedMs = 0;
 uint32_t fastInventoryLastFrameMs = 0;
 uint32_t fastInventoryDrainStartedMs = 0;
-uint32_t fastInventoryPauseStartedMs = 0;
 uint32_t antennaProbeStartedMs = 0;
 uint32_t nextAntennaProbeEarliestMs = 0;
 uint8_t regionSetAttempts = 0;
@@ -232,18 +208,8 @@ uint16_t unknownAntennaMask = 0;
 
 FastInventoryTag fastInventoryTags[MAX_FAST_INVENTORY_TAGS];
 size_t fastInventoryTagCount = 0;
-uint32_t fastInventoryReadCount = 0;
-uint32_t fastInventoryMalformedFrameCount = 0;
-uint32_t fastInventoryDroppedTagCount = 0;
-
-FastInventoryTestTag
-  fastInventoryTestTags[MAX_FAST_INVENTORY_TEST_TAGS];
-size_t fastInventoryTestTagCount = 0;
-uint32_t fastInventoryRequestedTrialCount = 0;
-uint32_t fastInventoryCompletedTrialCount = 0;
-uint32_t fastInventoryTestReadCount = 0;
-uint32_t fastInventoryTestMalformedFrameCount = 0;
-uint32_t fastInventoryTestDroppedTagCount = 0;
+bool fastInventoryOverflow = false;
+bool fastInventoryInvalidTagReceived = false;
 
 // Antenna mask helper function/////////////////////////
 uint16_t antennaBit(uint8_t port) {
@@ -312,24 +278,16 @@ bool requestSetEpcMode();
 bool handleSetEpcMode(size_t responseLength);
 bool requestClearInventoryMask();
 bool handleClearInventoryMask(size_t responseLength);
-bool startFastInventoryTest(uint32_t trialCount);
+bool startFastInventoryTest(uint32_t); // Zgodność z callback.h; argument jest ignorowany.
 bool requestStartFastInventory();
 bool handleStartFastInventory(size_t responseLength);
 bool handleFastInventoryTag(size_t responseLength);
 bool requestStopFastInventory();
 bool handleStopFastInventory(size_t responseLength);
 void serviceFastInventory();
-void resetFastInventoryStatistics();
-void resetFastInventoryTestStatistics(uint32_t trialCount);
-bool mergeFastInventoryTrial();
-void finishFastInventoryTrial();
-void printFastInventorySummary();
-void sortFastInventoryTags();
-void sortFastInventoryTestTags();
-void printFastInventoryTestSummary();
-void printFastInventoryCsv();
+void resetFastInventory();
+void finishFastInventory();
 void publishFastInventoryResult();
-void printEpc(const uint8_t* epc, size_t epcLength);
 
 ////////////////////////////////////////////////////////
 
@@ -367,8 +325,6 @@ void handleReaderRequest() {
 
         handleReaderTemperature(responseLength);
 
-        // // Temperature is optional on some models, so continue either way.
-        // requestWorkMode();
         break;
 
       case CMD_GET_WORK_MODE: {
@@ -781,6 +737,14 @@ bool receiveFrame(size_t& responseLength) {
 // sends requests with cmd codes to the rfid reader
 bool startTrackedRequest(PendingRequest request, uint8_t command, const uint8_t* data, size_t dataLength) {
 
+  // Rezerwujemy kanał komend dla STOP, aby diagnostyka nie wydłużyła skanowania.
+  if (fastInventoryState != FastInventoryState::Idle &&
+      fastInventoryState != FastInventoryState::Error &&
+      request != PendingRequest::StopFastInventory) {
+    Serial.println("[ERROR][RFID] Czytnik zajęty inwentaryzacją");
+    return false;
+  }
+
   const bool configurationOwnsRequest =
     readerConfigurationDispatching ||
     (readerConfigurationStep == ReaderConfigurationStep::DetectAntennas &&
@@ -817,7 +781,7 @@ bool finishTrackedRequest(PendingRequest expectedRequest) {
   return true;
 }
 
-// Logs a response and creates a non-owning view into the RX buffer.
+// Validates response length and creates a non-owning view into the RX buffer.
 bool prepareResponse(
   const char* operationName,
   size_t responseLength,
@@ -825,21 +789,12 @@ bool prepareResponse(
 
   response = {};
 
-  Serial.printf("\n[RFID] %s:\n", operationName);
-
   if (responseLength > sizeof(rx.buffer)) {
     Serial.printf(
       "[ERROR][RFID] %s: długość ramki przekracza rozmiar bufora\n",
       operationName);
     return false;
   }
-
-  Serial.print("[RFID] Ramka RX: ");
-
-  for (size_t i = 0; i < responseLength; i++) {
-    Serial.printf("%02X ", static_cast<unsigned>(rx.buffer[i]));
-  }
-  Serial.println();
 
   constexpr size_t MIN_RESPONSE_LENGTH = 6;
   if (responseLength < MIN_RESPONSE_LENGTH) {
@@ -1134,6 +1089,12 @@ bool handleEnableAntennaCheck(size_t responseLength) {
 }
 
 bool startAntennaDetection() {
+  if (fastInventoryState != FastInventoryState::Idle ||
+      (readerConfigurationIsActive() && !readerConfigurationDispatching)) {
+    Serial.println("[ERROR][RFID] Czytnik jest zajęty");
+    return false;
+  }
+
   if (antennaDetectionActive) {
     Serial.println("[ERROR][RFID] Sprawdzanie anten już trwa");
     return false;
@@ -1276,9 +1237,6 @@ AntennaProbeResult handleAntennaProbeResponse(
 
   switch (response.status) {
     case STATUS_INVENTORY_MORE_FRAMES:
-      Serial.printf(
-        "[RFID] ANT%u: oczekiwanie na kolejną ramkę inventory\n",
-        static_cast<unsigned>(testedAntennaPort));
       return AntennaProbeResult::MoreFrames;
 
     case STATUS_INVENTORY_COMPLETED:
@@ -1576,58 +1534,26 @@ bool handleClearInventoryMask(size_t responseLength) {
   return true;
 }
 
-void resetFastInventoryStatistics() {
-  // Zerujemy tylko bieżącą próbę; wyniki całej serii muszą pozostać.
+void resetFastInventory() {
   memset(fastInventoryTags, 0, sizeof(fastInventoryTags));
   fastInventoryTagCount = 0;
-  fastInventoryReadCount = 0;
-  fastInventoryMalformedFrameCount = 0;
-  fastInventoryDroppedTagCount = 0;
+  fastInventoryOverflow = false;
+  fastInventoryInvalidTagReceived = false;
   fastInventoryStartedMs = 0;
   fastInventoryLastFrameMs = 0;
   fastInventoryDrainStartedMs = 0;
 }
 
-void resetFastInventoryTestStatistics(uint32_t trialCount) {
-  // Agregat jest zerowany tylko raz, przed pierwszą próbą serii.
-  memset(fastInventoryTestTags, 0, sizeof(fastInventoryTestTags));
-  fastInventoryTestTagCount = 0;
-  fastInventoryRequestedTrialCount = trialCount;
-  fastInventoryCompletedTrialCount = 0;
-  fastInventoryTestReadCount = 0;
-  fastInventoryTestMalformedFrameCount = 0;
-  fastInventoryTestDroppedTagCount = 0;
-  fastInventoryPauseStartedMs = 0;
-}
-
-bool startFastInventoryTest(uint32_t trialCount) {
-  if (trialCount == 0 ||
-      fastInventoryState != FastInventoryState::Idle ||
-      pendingRequest != PendingRequest::None ||
-      activeAntennaMask == 0) {
-    Serial.println(
-      "[ERROR][RFID] Seria fast inventory nie może zostać uruchomiona");
-    return false;
-  }
-
-  resetFastInventoryTestStatistics(trialCount);
-
-  Serial.printf(
-    "\n[RFID][FAST] Start serii: %lu prób, "
-    "%lu ms skanowania i %lu ms przerwy\n",
-    static_cast<unsigned long>(trialCount),
-    static_cast<unsigned long>(FAST_INVENTORY_TIME_MS),
-    static_cast<unsigned long>(FAST_INVENTORY_TRIAL_PAUSE_MS));
-
+// callback.h nadal przekazuje dawną liczbę prób. Każde żądanie uruchamia
+// tylko jedną inwentaryzację, niezależnie od wartości tego argumentu.
+bool startFastInventoryTest(uint32_t) {
   return requestStartFastInventory();
 }
 
 bool requestStartFastInventory() {
-  const bool stateAllowsStart =
-    fastInventoryState == FastInventoryState::Idle ||
-    fastInventoryState == FastInventoryState::WaitingBetweenTrials;
-
-  if (!stateAllowsStart ||
+  if (fastInventoryState != FastInventoryState::Idle ||
+      readerConfigurationStep != ReaderConfigurationStep::Completed ||
+      antennaDetectionActive ||
       pendingRequest != PendingRequest::None ||
       activeAntennaMask == 0) {
     Serial.println(
@@ -1635,7 +1561,7 @@ bool requestStartFastInventory() {
     return false;
   }
 
-  resetFastInventoryStatistics();
+  resetFastInventory();
 
   const uint8_t data[] = {
     FAST_INVENTORY_TARGET
@@ -1663,16 +1589,13 @@ bool handleStartFastInventory(size_t responseLength) {
     return false;
   }
 
+  // Pięć sekund od potwierdzenia START; odbiór danych po STOP jest osobnym etapem.
   fastInventoryStartedMs = millis();
   fastInventoryLastFrameMs = fastInventoryStartedMs;
   fastInventoryState = FastInventoryState::Running;
 
   Serial.printf(
-    "[RFID][FAST] Rozpoczęto próbę %lu/%lu na %lu ms\n",
-    static_cast<unsigned long>(
-      fastInventoryCompletedTrialCount + 1U),
-    static_cast<unsigned long>(
-      fastInventoryRequestedTrialCount),
+    "[RFID] Rozpoczęto inwentaryzację na %lu ms\n",
     static_cast<unsigned long>(FAST_INVENTORY_TIME_MS));
   return true;
 }
@@ -1693,7 +1616,7 @@ bool handleFastInventoryTag(size_t responseLength) {
   constexpr size_t MIN_FAST_TAG_FRAME_LENGTH = 9;
   if (responseLength < MIN_FAST_TAG_FRAME_LENGTH ||
       rx.buffer[3] != 0x00) {
-    ++fastInventoryMalformedFrameCount;
+    fastInventoryInvalidTagReceived = true;
     return false;
   }
 
@@ -1714,7 +1637,7 @@ bool handleFastInventoryTag(size_t responseLength) {
       identifierLength == 0 ||
       identifierLength > MAX_FAST_EPC_LENGTH ||
       dataLength != expectedDataLength) {
-    ++fastInventoryMalformedFrameCount;
+    fastInventoryInvalidTagReceived = true;
     return false;
   }
 
@@ -1725,7 +1648,7 @@ bool handleFastInventoryTag(size_t responseLength) {
     constexpr size_t FAST_ID_TID_LENGTH = 12;
 
     if (identifierLength <= FAST_ID_TID_LENGTH) {
-      ++fastInventoryMalformedFrameCount;
+      fastInventoryInvalidTagReceived = true;
       return false;
     }
 
@@ -1733,24 +1656,18 @@ bool handleFastInventoryTag(size_t responseLength) {
   }
 
   const uint8_t* epc = data + 2;
-  const uint16_t antennaMask =
-    static_cast<uint16_t>(uint16_t{1} << antennaRaw);
-
-  ++fastInventoryReadCount;
 
   for (size_t i = 0; i < fastInventoryTagCount; ++i) {
-    FastInventoryTag& tag = fastInventoryTags[i];
+    const FastInventoryTag& tag = fastInventoryTags[i];
 
     if (tag.epcLength == epcLength &&
         memcmp(tag.epc, epc, epcLength) == 0) {
-      tag.antennaMask |= antennaMask;
-      ++tag.readCount;
       return true;
     }
   }
 
   if (fastInventoryTagCount >= MAX_FAST_INVENTORY_TAGS) {
-    ++fastInventoryDroppedTagCount;
+    fastInventoryOverflow = true;
     return false;
   }
 
@@ -1759,141 +1676,26 @@ bool handleFastInventoryTag(size_t responseLength) {
   tag = FastInventoryTag{};
   memcpy(tag.epc, epc, epcLength);
   tag.epcLength = static_cast<uint8_t>(epcLength);
-  tag.antennaMask = antennaMask;
-  tag.readCount = 1;
   return true;
 }
 
-int findFastInventoryTag(
-  const uint8_t* epc,
-  size_t epcLength) {
-  for (size_t i = 0; i < fastInventoryTagCount; ++i) {
-    const FastInventoryTag& tag = fastInventoryTags[i];
-
-    if (tag.epcLength == epcLength &&
-        memcmp(tag.epc, epc, epcLength) == 0) {
-      return static_cast<int>(i);
-    }
-  }
-
-  return -1;
-}
-
-int findFastInventoryTestTag(
-  const uint8_t* epc,
-  size_t epcLength) {
-  for (size_t i = 0; i < fastInventoryTestTagCount; ++i) {
-    const FastInventoryTestTag& tag = fastInventoryTestTags[i];
-
-    if (tag.epcLength == epcLength &&
-        memcmp(tag.epc, epc, epcLength) == 0) {
-      return static_cast<int>(i);
-    }
-  }
-
-  return -1;
-}
-
-bool mergeFastInventoryTrial() {
-  // Brak EPC w tej próbie zeruje jego maskę niezawodnych anten.
-  for (size_t i = 0; i < fastInventoryTestTagCount; ++i) {
-    FastInventoryTestTag& aggregateTag = fastInventoryTestTags[i];
-    const int currentTagIndex = findFastInventoryTag(
-      aggregateTag.epc,
-      aggregateTag.epcLength);
-
-    if (currentTagIndex < 0) {
-      aggregateTag.reliableAntennaMask = 0;
-      continue;
-    }
-
-    const FastInventoryTag& currentTag =
-      fastInventoryTags[static_cast<size_t>(currentTagIndex)];
-    aggregateTag.reliableAntennaMask &= currentTag.antennaMask;
-    aggregateTag.anyAntennaMask |= currentTag.antennaMask;
-    ++aggregateTag.detectedTrialCount;
-    aggregateTag.totalReadCount += currentTag.readCount;
-  }
-
-  // EPC pojawiające się pierwszy raz później nie było obecne we wcześniejszych próbach.
-  for (size_t i = 0; i < fastInventoryTagCount; ++i) {
-    const FastInventoryTag& currentTag = fastInventoryTags[i];
-
-    if (findFastInventoryTestTag(
-          currentTag.epc,
-          currentTag.epcLength) >= 0) {
-      continue;
-    }
-
-    if (fastInventoryTestTagCount >=
-        MAX_FAST_INVENTORY_TEST_TAGS) {
-      ++fastInventoryTestDroppedTagCount;
-      return false;
-    }
-
-    FastInventoryTestTag& aggregateTag =
-      fastInventoryTestTags[fastInventoryTestTagCount++];
-    aggregateTag = FastInventoryTestTag{};
-    memcpy(
-      aggregateTag.epc,
-      currentTag.epc,
-      currentTag.epcLength);
-    aggregateTag.epcLength = currentTag.epcLength;
-    aggregateTag.reliableAntennaMask =
-      fastInventoryCompletedTrialCount == 0
-        ? currentTag.antennaMask
-        : 0;
-    aggregateTag.anyAntennaMask = currentTag.antennaMask;
-    aggregateTag.detectedTrialCount = 1;
-    aggregateTag.totalReadCount = currentTag.readCount;
-  }
-
-  fastInventoryTestReadCount += fastInventoryReadCount;
-  fastInventoryTestMalformedFrameCount +=
-    fastInventoryMalformedFrameCount;
-  fastInventoryTestDroppedTagCount += fastInventoryDroppedTagCount;
-  return true;
-}
-
-void finishFastInventoryTrial() {
-  // Przepełniona tablica bieżącej próby dawałaby mylący wynik niezawodności.
-  if (fastInventoryDroppedTagCount > 0) {
-    fastInventoryTestDroppedTagCount += fastInventoryDroppedTagCount;
+void finishFastInventory() {
+  // Nie publikujemy niepełnej listy EPC po przepełnieniu bufora.
+  if (fastInventoryOverflow) {
     fastInventoryState = FastInventoryState::Error;
     Serial.println(
-      "[ERROR][RFID] Za dużo EPC w próbie; seria została przerwana");
+      "[ERROR][RFID] Za dużo unikalnych EPC; wynik inwentaryzacji odrzucony");
     return;
   }
 
-  if (!mergeFastInventoryTrial()) {
-    fastInventoryState = FastInventoryState::Error;
+  if (fastInventoryInvalidTagReceived) {
     Serial.println(
-      "[ERROR][RFID] Za dużo różnych EPC w całej serii; seria została przerwana");
-    return;
+      "[ERROR][RFID] Pominięto nieprawidłowe dane tagów podczas inwentaryzacji");
   }
 
-  // Sortujemy także listę pojedynczej próby przed jej wydrukowaniem.
-  sortFastInventoryTags();
-  ++fastInventoryCompletedTrialCount;
-  printFastInventorySummary();
-
-  if (fastInventoryCompletedTrialCount >=
-      fastInventoryRequestedTrialCount) {
-    fastInventoryState = FastInventoryState::Idle;
-    sortFastInventoryTestTags();
-    printFastInventoryTestSummary();
-    printFastInventoryCsv();
-    publishFastInventoryResult();
-    return;
-  }
-
-  fastInventoryState = FastInventoryState::WaitingBetweenTrials;
-  Serial.printf(
-    "[RFID][FAST] Przerwa przed kolejną próbą: %lu ms\n",
-    static_cast<unsigned long>(FAST_INVENTORY_TRIAL_PAUSE_MS));
-
-  // Odliczanie zaczyna się po wydrukowaniu podsumowania bieżącej próby.
-  fastInventoryPauseStartedMs = millis();
+  fastInventoryState = FastInventoryState::Idle;
+  Serial.println("[RFID] Inwentaryzacja zakończona");
+  publishFastInventoryResult();
 }
 
 bool requestStopFastInventory() {
@@ -1906,7 +1708,6 @@ bool requestStopFastInventory() {
   }
 
   fastInventoryState = FastInventoryState::Stopping;
-  Serial.println("[RFID][FAST] Wysłano komendę zatrzymania");
   return true;
 }
 
@@ -1925,29 +1726,11 @@ bool handleStopFastInventory(size_t responseLength) {
   fastInventoryLastFrameMs = now;
   fastInventoryState = FastInventoryState::Draining;
 
-  Serial.println(
-    "[RFID][FAST] Czytnik zatrzymany, opróżniam bufor RX");
   return true;
 }
 
 void serviceFastInventory() {
   const uint32_t now = millis();
-
-  // Następna próba startuje dopiero po pełnych 5 sekundach przerwy.
-  if (fastInventoryState ==
-      FastInventoryState::WaitingBetweenTrials) {
-    if (static_cast<uint32_t>(
-          now - fastInventoryPauseStartedMs) >=
-        FAST_INVENTORY_TRIAL_PAUSE_MS) {
-      if (!requestStartFastInventory()) {
-        fastInventoryState = FastInventoryState::Error;
-        Serial.println(
-          "[ERROR][RFID] Nie rozpoczęto kolejnej próby fast inventory");
-      }
-    }
-
-    return;
-  }
 
   if (fastInventoryState == FastInventoryState::Running &&
       static_cast<uint32_t>(now - fastInventoryStartedMs) >=
@@ -1981,26 +1764,16 @@ void serviceFastInventory() {
   if (receiverIsEmpty &&
       drainRanLongEnough &&
       noRecentTagFrames) {
-    // Dopiero po opróżnieniu RX próba jest kompletna i może trafić do agregatu.
-    finishFastInventoryTrial();
+    // Publikujemy wynik dopiero po odebraniu ostatnich tagów z bufora RX.
+    finishFastInventory();
     return;
   }
 
   if (drainLimitReached) {
-    // Nie zaliczamy niepełnej próby, bo mogłaby zawyżyć liczbę zer w CSV.
+    // Nie publikujemy wyniku, gdy odbiór końcowych danych nie został zakończony.
     fastInventoryState = FastInventoryState::Error;
     Serial.println(
-      "[ERROR][RFID] Nie opróżniono RX po fast inventory; seria przerwana");
-  }
-}
-
-void printEpc(const uint8_t* epc, size_t epcLength) {
-  for (size_t byteIndex = 0;
-       byteIndex < epcLength;
-       ++byteIndex) {
-    Serial.printf(
-      "%02X",
-      static_cast<unsigned>(epc[byteIndex]));
+      "[ERROR][RFID] Nie opróżniono RX po fast inventory; wynik odrzucony");
   }
 }
 
@@ -2010,9 +1783,9 @@ void publishFastInventoryResult() {
   // {"tags":["AABB",...]}: dwa znaki na każdy bajt EPC oraz cudzysłowy
   // i przecinki dla każdego elementu.
   size_t payloadLength = sizeof("{\"tags\":[]}") - 1;
-  for (size_t i = 0; i < fastInventoryTestTagCount; ++i) {
+  for (size_t i = 0; i < fastInventoryTagCount; ++i) {
     payloadLength +=
-      (2U * fastInventoryTestTags[i].epcLength) + 2U;
+      (2U * fastInventoryTags[i].epcLength) + 2U;
     if (i > 0) {
       ++payloadLength;
     }
@@ -2026,8 +1799,8 @@ void publishFastInventoryResult() {
   }
 
   payload = "{\"tags\":[";
-  for (size_t i = 0; i < fastInventoryTestTagCount; ++i) {
-    const FastInventoryTestTag& tag = fastInventoryTestTags[i];
+  for (size_t i = 0; i < fastInventoryTagCount; ++i) {
+    const FastInventoryTag& tag = fastInventoryTags[i];
 
     if (i > 0) {
       payload += ',';
@@ -2055,274 +1828,7 @@ void publishFastInventoryResult() {
     return;
   }
 
-  publishMessage(reader_read_tags.c_str(), payload, false, true);
-}
-
-void printAntennaMask(uint16_t mask) {
-  bool firstAntenna = true;
-
-  for (uint8_t port = 1;
-       port <= ANTENNA_PORT_COUNT;
-       ++port) {
-    if ((mask & antennaBit(port)) == 0) {
-      continue;
-    }
-
-    if (!firstAntenna) {
-      Serial.print(", ");
-    }
-
-    Serial.printf("ANT%u", static_cast<unsigned>(port));
-    firstAntenna = false;
-  }
-
-  if (firstAntenna) {
-    Serial.print("brak");
-  }
-}
-
-void printFastInventorySummary() {
-  Serial.printf(
-    "\n[RFID][FAST] ===== PRÓBA %lu/%lu =====\n",
-    static_cast<unsigned long>(fastInventoryCompletedTrialCount),
-    static_cast<unsigned long>(fastInventoryRequestedTrialCount));
-  Serial.printf(
-    "[RFID][FAST] Odczyty: %lu, unikalne EPC: %u, "
-    "błędne ramki: %lu, pominięte nowe EPC: %lu\n",
-    static_cast<unsigned long>(fastInventoryReadCount),
-    static_cast<unsigned>(fastInventoryTagCount),
-    static_cast<unsigned long>(fastInventoryMalformedFrameCount),
-    static_cast<unsigned long>(fastInventoryDroppedTagCount));
-
-  for (size_t i = 0; i < fastInventoryTagCount; ++i) {
-    const FastInventoryTag& tag = fastInventoryTags[i];
-
-    Serial.print("[RFID][FAST] EPC=");
-    printEpc(tag.epc, tag.epcLength);
-    Serial.print(" | anteny: ");
-    printAntennaMask(tag.antennaMask);
-    Serial.printf(
-      " | odczyty: %lu\n",
-      static_cast<unsigned long>(tag.readCount));
-  }
-
-  Serial.println("[RFID][FAST] =========================");
-}
-
-int compareEpcNumerically(
-  const uint8_t* left,
-  size_t leftLength,
-  const uint8_t* right,
-  size_t rightLength) {
-  // Pomijamy zera wiodące, aby porównywać EPC jak liczby big-endian.
-  size_t leftFirstSignificantByte = 0;
-  while (leftFirstSignificantByte < leftLength &&
-         left[leftFirstSignificantByte] == 0) {
-    ++leftFirstSignificantByte;
-  }
-
-  size_t rightFirstSignificantByte = 0;
-  while (rightFirstSignificantByte < rightLength &&
-         right[rightFirstSignificantByte] == 0) {
-    ++rightFirstSignificantByte;
-  }
-
-  const size_t leftSignificantLength =
-    leftLength - leftFirstSignificantByte;
-  const size_t rightSignificantLength =
-    rightLength - rightFirstSignificantByte;
-
-  if (leftSignificantLength < rightSignificantLength) {
-    return -1;
-  }
-
-  if (leftSignificantLength > rightSignificantLength) {
-    return 1;
-  }
-
-  const int byteComparison = memcmp(
-    left + leftFirstSignificantByte,
-    right + rightFirstSignificantByte,
-    leftSignificantLength);
-
-  if (byteComparison != 0) {
-    return byteComparison;
-  }
-
-  // Równe wartości z różną liczbą zer wiodących układamy deterministycznie.
-  if (leftLength < rightLength) {
-    return -1;
-  }
-
-  if (leftLength > rightLength) {
-    return 1;
-  }
-
-  return 0;
-}
-
-int compareFastInventoryTags(
-  const FastInventoryTag& left,
-  const FastInventoryTag& right) {
-  return compareEpcNumerically(
-    left.epc,
-    left.epcLength,
-    right.epc,
-    right.epcLength);
-}
-
-int compareFastInventoryTestTags(
-  const FastInventoryTestTag& left,
-  const FastInventoryTestTag& right) {
-  return compareEpcNumerically(
-    left.epc,
-    left.epcLength,
-    right.epc,
-    right.epcLength);
-}
-
-void sortFastInventoryTags() {
-  for (size_t i = 1; i < fastInventoryTagCount; ++i) {
-    const FastInventoryTag current = fastInventoryTags[i];
-    size_t destination = i;
-
-    while (destination > 0 &&
-           compareFastInventoryTags(
-             current,
-             fastInventoryTags[destination - 1]) < 0) {
-      fastInventoryTags[destination] =
-        fastInventoryTags[destination - 1];
-      --destination;
-    }
-
-    fastInventoryTags[destination] = current;
-  }
-}
-
-void sortFastInventoryTestTags() {
-  // Ta sama kolejność numeryczna trafia do podsumowania końcowego i CSV.
-  for (size_t i = 1; i < fastInventoryTestTagCount; ++i) {
-    const FastInventoryTestTag current = fastInventoryTestTags[i];
-    size_t destination = i;
-
-    while (destination > 0 &&
-           compareFastInventoryTestTags(
-             current,
-             fastInventoryTestTags[destination - 1]) < 0) {
-      fastInventoryTestTags[destination] =
-        fastInventoryTestTags[destination - 1];
-      --destination;
-    }
-
-    fastInventoryTestTags[destination] = current;
-  }
-}
-
-uint16_t reliableAntennaMaskForTag(
-  const FastInventoryTestTag& tag) {
-  // Dodatkowa kontrola wyklucza tag, którego zabrakło w całej jednej próbie.
-  if (tag.detectedTrialCount !=
-      fastInventoryRequestedTrialCount) {
-    return 0;
-  }
-
-  return static_cast<uint16_t>(
-    tag.reliableAntennaMask & activeAntennaMask);
-}
-
-uint8_t countAntennasInMask(uint16_t mask) {
-  uint8_t antennaCount = 0;
-
-  for (uint8_t port = 1;
-       port <= ANTENNA_PORT_COUNT;
-       ++port) {
-    if ((mask & antennaBit(port)) != 0) {
-      ++antennaCount;
-    }
-  }
-
-  return antennaCount;
-}
-
-void printFastInventoryTestSummary() {
-  Serial.println(
-    "\n[RFID][FAST] ===== PODSUMOWANIE CAŁEJ SERII =====");
-  Serial.printf(
-    "[RFID][FAST] Próby: %lu/%lu, odczyty: %lu, "
-    "unikalne EPC: %u, błędne ramki: %lu, pominięte EPC: %lu\n",
-    static_cast<unsigned long>(fastInventoryCompletedTrialCount),
-    static_cast<unsigned long>(fastInventoryRequestedTrialCount),
-    static_cast<unsigned long>(fastInventoryTestReadCount),
-    static_cast<unsigned>(fastInventoryTestTagCount),
-    static_cast<unsigned long>(fastInventoryTestMalformedFrameCount),
-    static_cast<unsigned long>(fastInventoryTestDroppedTagCount));
-
-  for (size_t i = 0; i < fastInventoryTestTagCount; ++i) {
-    const FastInventoryTestTag& tag = fastInventoryTestTags[i];
-    const uint16_t reliableMask = reliableAntennaMaskForTag(tag);
-
-    Serial.print("[RFID][FAST] EPC=");
-    printEpc(tag.epc, tag.epcLength);
-    Serial.printf(
-      " | próby z tagiem: %lu/%lu | niezawodne anteny (%u): ",
-      static_cast<unsigned long>(tag.detectedTrialCount),
-      static_cast<unsigned long>(fastInventoryRequestedTrialCount),
-      static_cast<unsigned>(countAntennasInMask(reliableMask)));
-    printAntennaMask(reliableMask);
-    Serial.print(" | wykryły przynajmniej raz: ");
-    printAntennaMask(
-      static_cast<uint16_t>(tag.anyAntennaMask & activeAntennaMask));
-    Serial.printf(
-      " | odczyty łącznie: %lu\n",
-      static_cast<unsigned long>(tag.totalReadCount));
-  }
-
-  Serial.println(
-    "[RFID][FAST] ======================================");
-}
-
-void printFastInventoryCsv() {
-  // Format pozostaje zgodny z tools/plot_tag_coverage.py ze starego projektu.
-  Serial.println("[RFID] TAG_CSV_BEGIN");
-  Serial.print("epc,antenna_count");
-
-  for (uint8_t port = 1;
-       port <= ANTENNA_PORT_COUNT;
-       ++port) {
-    if ((activeAntennaMask & antennaBit(port)) != 0) {
-      Serial.printf(",A%u", static_cast<unsigned>(port));
-    }
-  }
-
-  Serial.println();
-
-  for (size_t i = 0; i < fastInventoryTestTagCount; ++i) {
-    const FastInventoryTestTag& tag = fastInventoryTestTags[i];
-    const uint16_t reliableMask = reliableAntennaMaskForTag(tag);
-
-    printEpc(tag.epc, tag.epcLength);
-    Serial.printf(
-      ",%u",
-      static_cast<unsigned>(countAntennasInMask(reliableMask)));
-
-    for (uint8_t port = 1;
-         port <= ANTENNA_PORT_COUNT;
-         ++port) {
-      const uint16_t bit = antennaBit(port);
-
-      if ((activeAntennaMask & bit) == 0) {
-        continue;
-      }
-
-      Serial.printf(
-        ",%u",
-        static_cast<unsigned>((reliableMask & bit) != 0));
-    }
-
-    Serial.println();
-  }
-
-  Serial.println("[RFID] TAG_CSV_END");
+  publishMessage(reader_read_tags.c_str(), payload, false, false);
 }
 
 

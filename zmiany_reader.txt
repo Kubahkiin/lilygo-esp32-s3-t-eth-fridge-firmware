@@ -1,0 +1,59 @@
+Zmiany w src/reader.h
+
+Cel: konfiguracja i diagnostyka czytnika oraz pojedyncza inwentaryzacja
+trwająca 5 sekund, bez mechanizmów służących do serii testowych.
+
+Usunięto:
+- Generowanie CSV i znaczniki TAG_CSV_BEGIN / TAG_CSV_END.
+- Serie prób, ustawianie ich liczby, przerwy między próbami i automatyczne
+  uruchamianie kolejnych skanowań.
+- Zbiorczą tablicę wyników, łączenie wyników prób, liczniki odczytów,
+  analizę powtarzalności wykryć i wyznaczanie niezawodnych anten.
+- Maski anten i liczniki przypisane do poszczególnych EPC.
+- Sortowanie EPC na potrzeby raportów, szczegółowe podsumowania oraz
+  wypisywanie list EPC i pełnych ramek odpowiedzi na port szeregowy.
+  Nie pozostały obliczenia zbiorczych statystyk serii testowej.
+
+Zachowano:
+- Konfigurację regionu, mocy, aktywnych anten i parametrów inwentaryzacji.
+- Diagnostykę firmware/modelu, temperatury, trybu pracy, regionu, mocy
+  oraz połączenia anten. Sprawdzanie portów antenowych pozostaje elementem
+  konfiguracji i diagnostyki.
+- Komunikację UART, CRC16, sprawdzanie długości i statusów odpowiedzi,
+  obsługę timeoutów oraz odbiór końcowych danych po zatrzymaniu czytnika.
+- Listę maksymalnie 160 unikalnych EPC i publikację przez MQTT
+  w dotychczasowym formacie {"tags":["EPC1","EPC2"]}.
+
+Przebieg pojedynczej inwentaryzacji:
+- requestStartFastInventory() uruchamia jeden skan po zakończeniu
+  konfiguracji, gdy czytnik jest wolny i wykryto aktywną antenę.
+- Od poprawnego potwierdzenia START odliczane jest 5000 ms. Następnie
+  wysyłany jest STOP. Po jego potwierdzeniu odbierane są końcowe dane:
+  wymagany jest pusty odbiornik i 50 ms ciszy; limit tego etapu to 500 ms.
+- Po zakończeniu publikowana jest jedna lista EPC w kolejności pierwszego
+  wykrycia. Duplikaty są pomijane. Brak tagów daje {"tags":[]}.
+- Kolejna inwentaryzacja wymaga nowego żądania; nie ma automatycznych powtórzeń.
+- Przepełnienie listy lub nieudane zakończenie odbioru blokuje publikację
+  niepełnego wyniku. Nieprawidłowe dane tagów są odrzucane i sygnalizowane
+  jednym komunikatem przy zakończeniu, bez liczenia statystyk odczytów.
+
+Zgodność i ochrona przed kolizją komend:
+- Pozostawiono krótki adapter startFastInventoryTest(uint32_t), ponieważ
+  nieedytowany callback.h nadal wywołuje tę nazwę. Argument jest ignorowany:
+  każda wartość, także 0 lub 5, oznacza jeden skan trwający 5 sekund.
+- Podczas skanowania i odbioru końcowych danych blokowane są inne komendy
+  poza STOP, aby diagnostyka nie zajęła kolejki potrzebnej do zatrzymania.
+- Wykrywanie anten nie może wtedy zmienić masek portów. Diagnostyka
+  firmware i temperatury pozostaje dostępna także po przejściu w stan Error.
+- Zachowano blokadę kolejnej inwentaryzacji w stanie Error; nie dodawano
+  automatycznego odzyskiwania po błędzie komunikacji lub przepełnieniu.
+
+Weryfikacja i ograniczenia:
+- Projekt skompilowano przez PlatformIO dla środowiska t-eth-lite-esp32s3.
+- Sprawdzono wywołania w pozostałych plikach i usunięcie odwołań do agregacji,
+  raportów i CSV. Nie przeprowadzano testu na fizycznym czytniku.
+- Odliczanie pozostaje obsługiwane przez główną pętlę programu. Blokujący
+  kod poza reader.h, np. reconnect(), może opóźnić wysłanie STOP. Całkowity
+  czas do publikacji wyniku obejmuje też potwierdzenia i opróżnienie RX.
+- Zmieniono wyłącznie src/reader.h i dodano niniejszy opis. Pozostałe pliki
+  źródłowe oraz narzędzia testowe znajdujące się w repozytorium nie były edytowane.
