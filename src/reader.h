@@ -1,13 +1,30 @@
+/**
+ *  \file reader.h
+ *  Konfiguracja i diagnostyka czytnika RFID oraz pojedyncza inwentaryzacja.
+ *  Komunikacja z czytnikiem odbywa się przez UART, a lista EPC trafia do MQTT.
+ */
 #ifndef _READER_H_
 #define _READER_H_
 
 
 
+/** Port UART używany do komunikacji z czytnikiem RFID. */
 HardwareSerial RfidSerial(1);
 
-// CRC16 ///////////////////////////////////////////////
+/** @name Parametry sumy kontrolnej CRC16 */
+///@{
+/** Wartość początkowa rejestru CRC16. */
 #define PRESET_VALUE 0xFFFF
+/** Wielomian CRC16 w postaci używanej przy przesuwaniu bitów w prawo. */
 #define POLYNOMIAL 0x8408
+///@}
+
+/**
+ *  Obliczenie sumy CRC16 dla wskazanego ciągu bajtów.
+ *  \param pucY Wskaźnik na dane, bez końcowych bajtów CRC.
+ *  \param ucX Liczba bajtów uwzględnianych w obliczeniu.
+ *  \return Obliczona 16-bitowa suma kontrolna.
+ */
 unsigned int uiCrc16(unsigned char const *pucY, unsigned char ucX) {
   unsigned char ucI, ucJ;
   unsigned short int uiCrcValue = PRESET_VALUE;
@@ -25,193 +42,319 @@ unsigned int uiCrc16(unsigned char const *pucY, unsigned char ucX) {
   return uiCrcValue;
 }
 ////////////////////////////////////////////////////////
-// Constants ///////////////////////////////////////////
-// Broadcast address - 0xFF, default address - 0x00
+/** @name Stałe komunikacji, konfiguracji i inwentaryzacji
+ *  Czasy podane są w milisekundach, jeśli opis nie wskazuje innej jednostki.
+ */
+///@{
+/** Adres rozgłoszeniowy czytnika; domyślny adres urządzenia to 0x00. */
 constexpr uint8_t ADDRESS = 0xFF;
+/** Maksymalny czas oczekiwania na odpowiedź komendy. */
 constexpr uint32_t COMM_TIMEOUT_MS = 1000;
+/** Maksymalny odstęp między bajtami jednej ramki. */
 constexpr uint8_t INTER_BYTE_TIMEOUT_MS = 15;
+/** Prędkość transmisji UART w bitach na sekundę. */
 constexpr uint32_t RFID_BAUD_RATE = 115200; // 115200;
+/** Rozmiar bufora odbiorczego sterownika UART w bajtach. */
 constexpr size_t RFID_RX_BUFFER_SIZE = 4096;
+/** Liczba obsługiwanych portów antenowych. */
 constexpr uint8_t ANTENNA_PORT_COUNT = 16;
+/** Czas pojedynczego skanowania, liczony od potwierdzenia START. */
 constexpr uint32_t FAST_INVENTORY_TIME_MS = 5000;
+/** Wymagany czas ciszy przed zakończeniem odbioru danych po STOP. */
 constexpr uint32_t FAST_INVENTORY_DRAIN_QUIET_MS = 50;
+/** Maksymalny czas odbierania końcowych danych po potwierdzeniu STOP. */
 constexpr uint32_t FAST_INVENTORY_DRAIN_MAX_MS = 500;
+/** Limit ramek przetwarzanych podczas jednego wywołania handleReaderRequest(). */
 constexpr uint8_t MAX_RX_FRAMES_PER_LOOP = 32;
+/** Flaga docelowa tagów podczas inwentaryzacji: Target A. */
 constexpr uint8_t FAST_INVENTORY_TARGET = 0x00; // Target A
+/** Maksymalna liczba unikalnych EPC przechowywanych w wyniku. */
 constexpr size_t MAX_FAST_INVENTORY_TAGS = 160;
+/** Maksymalna długość identyfikatora EPC w bajtach. */
 constexpr size_t MAX_FAST_EPC_LENGTH = 0x3F;
+/** Docelowa moc wyjściowa portów antenowych w dBm. */
 constexpr uint8_t RFID_POWER_DBM = 33;
+/** Limit prób ustawienia niezgodnego regionu lub mocy. */
 constexpr uint8_t MAX_CONFIG_SET_ATTEMPTS = 1;
+/** Parametr Q krótkiego odczytu sprawdzającego połączenie anteny. */
 constexpr uint8_t ANTENNA_PROBE_Q_VALUE = 0x00;
+/** Sesja używana do sprawdzania połączenia anteny. */
 constexpr uint8_t ANTENNA_PROBE_SESSION = 0x00;
+/** Flaga docelowa tagów podczas sprawdzania połączenia anteny. */
 constexpr uint8_t ANTENNA_PROBE_TARGET = 0x00;
+/** Czas sprawdzania anteny w jednostkach po 100 ms. */
 constexpr uint8_t ANTENNA_PROBE_SCAN_TIME = 0x02; // 2 * 100 ms
+/** Bity komendy wybierającej pojedynczy port antenowy. */
 constexpr uint8_t ANTENNA_SELECTOR_BASE = 0x80;
+/** Bezwzględny limit czasu sprawdzania jednego portu antenowego. */
 constexpr uint32_t ANTENNA_PROBE_MAX_DURATION_MS = 2000;
+/** Przerwa na odbiór opóźnionych danych po przekroczeniu czasu sprawdzania anteny. */
 constexpr uint32_t ANTENNA_PROBE_TIMEOUT_RECOVERY_MS = 400;
 
+/** Parametr Q określający liczbę szczelin rundy inwentaryzacji jako 2 do potęgi Q. */
 constexpr uint8_t Q_VALUE = 0x06; // 2^Q tags in the range of the antena <0 - 15>
+/** Sesja inwentaryzacji: 0-3 oznacza S0-S3, a 0xFF wybór automatyczny. */
 constexpr uint8_t SESSION = 0x00; // S0, S1, S2, S3, FF is auto
+/** Wartość ustawienia TagFocus; 0x00 wyłącza tę funkcję. */
 constexpr uint8_t TAG_FOCUS = 0x00;
 
 static_assert(
   ANTENNA_PORT_COUNT > 0 && ANTENNA_PORT_COUNT <= 16,
   "Antenna masks support from 1 to 16 ports");
 
+/** Maska wszystkich obsługiwanych portów; bit 0 odpowiada antenie 1. */
 constexpr uint16_t ALL_ANTENNA_PORTS_MASK =
   static_cast<uint16_t>(
     (uint32_t{1} << ANTENNA_PORT_COUNT) - 1U);
 
-// Lower ETSI RFID band: 865.7, 866.3, 866.9 and 867.5 MHz.
+/** Kod regionu EU3 dla kanałów 865,7; 866,3; 866,9 i 867,5 MHz. */
 constexpr uint8_t RFID_REGION_EU3 = 0x09;
+/** Pierwszy kanał używanego zakresu częstotliwości. */
 constexpr uint8_t RFID_REGION_MIN_CHANNEL = 0x00;
+/** Ostatni kanał używanego zakresu częstotliwości. */
 constexpr uint8_t RFID_REGION_MAX_CHANNEL = 0x03;
+///@}
 
-// Command bytes ///////////////////////////////////////
+/** @name Komendy czytnika i identyfikatory parametrów konfiguracji */
+///@{
+/** Odczyt wersji firmware i modelu czytnika. */
 constexpr uint8_t CMD_GET_READER_INFO = 0x21;
+/** Odczyt temperatury czytnika. */
 constexpr uint8_t CMD_GET_READER_TEMPERATURE = 0x92;
+/** Odczyt trybu pracy czytnika. */
 constexpr uint8_t CMD_GET_WORK_MODE = 0x77;
+/** Odczyt regionu i zakresu kanałów. */
 constexpr uint8_t CMD_READ_REGION = 0x9E;
+/** Ustawienie regionu i zakresu kanałów. */
 constexpr uint8_t CMD_SET_REGION = 0x22;
+/** Odczyt mocy portów antenowych. */
 constexpr uint8_t CMD_READ_ANTENNA_POWER = 0x94;
+/** Ustawienie mocy wyjściowej portów antenowych. */
 constexpr uint8_t CMD_SET_RF_POWER = 0x2F;
+/** Krótka inwentaryzacja Gen2 używana do sprawdzania połączenia anteny. */
 constexpr uint8_t CMD_INVENTORY_G2 = 0x01;
-// Fast inventory configuration commands
+/** Ustawienie maski aktywnych anten. */
 constexpr uint8_t CMD_SET_ACTIVE_ANTENNAS = 0x3F;
+/** Ustawienie parametru konfiguracji wskazanego identyfikatorem CFG. */
 constexpr uint8_t CMD_SET_CFG = 0xEA;
-// Configuration parameters IDs
+/** Identyfikator ustawienia TagFocus. */
 constexpr uint8_t CFG_TAG_FOCUS = 0x08; // check later
+/** Identyfikator ustawienia Q i sesji. */
 constexpr uint8_t CFG_Q_AND_SESSION = 0x09;
+/** Identyfikator ustawienia odczytu TID. */
 constexpr uint8_t CFG_TID = 0x0A;
+/** Identyfikator maski filtrującej tagi. */
 constexpr uint8_t CFG_MASK = 0x0B;
 
 
+/** Uruchomienie ciągłego raportowania tagów w trybie fast inventory. */
 constexpr uint8_t CMD_START_FAST_INVENTORY = 0x50;
+/** Zatrzymanie trybu fast inventory. */
 constexpr uint8_t CMD_STOP_FAST_INVENTORY = 0x51;
+/** Włączenie kontroli połączenia anten. */
 constexpr uint8_t CMD_SET_ANTENNA_CHECK = 0x66;
+/** Kod asynchronicznej ramki zawierającej odczytany tag. */
 constexpr uint8_t CMD_FAST_INVENTORY_TAG = 0xEE;
+///@}
 
+/** @name Statusy odpowiedzi używane przy sprawdzaniu połączenia anten */
+///@{
+/** Zakończenie inwentaryzacji Gen2. */
 constexpr uint8_t STATUS_INVENTORY_COMPLETED = 0x01;
+/** Upłynięcie czasu inwentaryzacji Gen2. */
 constexpr uint8_t STATUS_INVENTORY_TIMEOUT = 0x02;
+/** Zapowiedź kolejnych ramek wyniku inwentaryzacji Gen2. */
 constexpr uint8_t STATUS_INVENTORY_MORE_FRAMES = 0x03;
+/** Zapełnienie pamięci wyniku inwentaryzacji Gen2. */
 constexpr uint8_t STATUS_INVENTORY_MEMORY_FULL = 0x04;
+/** Błąd połączenia anteny. */
 constexpr uint8_t STATUS_ANTENNA_CONNECTION_ERROR = 0xF8;
+/** Błąd komunikacji czytnika z tagiem. */
 constexpr uint8_t STATUS_TAG_COMMUNICATION_ERROR = 0xFA;
+/** Brak tagów, na których można wykonać operację. */
 constexpr uint8_t STATUS_NO_OPERABLE_TAGS = 0xFB;
+/** Błąd zgłoszony przez tag. */
 constexpr uint8_t STATUS_TAG_ERROR = 0xFC;
+///@}
 ////////////////////////////////////////////////////////
 
+/** Rodzaj wysłanej komendy, której odpowiedzi oczekuje program. */
 enum class PendingRequest {
-  None,
-  ReaderInfo,
-  Temperature,
-  WorkMode,
-  ReadRegion,
-  SetRegion,
-  ReadAntennaPower,
-  SetRfPower,
-  EnableAntennaCheck,
-  ProbeAntenna,
-  ConfigureAntennas,
-  DisableTagFocus,
-  SetQAndSession,
-  SetEpcMode,
-  ClearInventoryMask,
-  StartFastInventory,
-  StopFastInventory
+  None,                 ///< Brak oczekującej komendy.
+  ReaderInfo,           ///< Odczyt firmware i modelu.
+  Temperature,          ///< Odczyt temperatury.
+  WorkMode,             ///< Odczyt trybu pracy.
+  ReadRegion,           ///< Odczyt regionu.
+  SetRegion,            ///< Ustawienie regionu.
+  ReadAntennaPower,     ///< Odczyt mocy anten.
+  SetRfPower,           ///< Ustawienie mocy anten.
+  EnableAntennaCheck,   ///< Włączenie kontroli połączenia anten.
+  ProbeAntenna,         ///< Sprawdzenie jednego portu antenowego.
+  ConfigureAntennas,    ///< Ustawienie aktywnych anten.
+  DisableTagFocus,      ///< Wyłączenie TagFocus.
+  SetQAndSession,       ///< Ustawienie Q i sesji.
+  SetEpcMode,           ///< Wybór zwracania EPC bez TID.
+  ClearInventoryMask,  ///< Wyłączenie filtrowania tagów.
+  StartFastInventory,  ///< Uruchomienie inwentaryzacji.
+  StopFastInventory    ///< Zatrzymanie inwentaryzacji.
 };
 
+/** Etap pojedynczej inwentaryzacji obsługiwanej w głównej pętli programu. */
 enum class FastInventoryState {
-  Idle,
-  Starting,
-  Running,
-  Stopping,
-  Draining,
-  Error
+  Idle,      ///< Oczekiwanie na nowe żądanie.
+  Starting,  ///< Oczekiwanie na potwierdzenie START.
+  Running,   ///< Odbiór tagów i odmierzanie czasu skanowania.
+  Stopping,  ///< Oczekiwanie na potwierdzenie STOP.
+  Draining,  ///< Odbiór końcowych danych po potwierdzonym STOP.
+  Error      ///< Błąd blokujący rozpoczęcie kolejnej inwentaryzacji.
 };
 
+/** Kroki automatycznej konfiguracji realizowanej przez reader_configuration.h. */
 enum class ReaderConfigurationStep {
-  Idle,
-  ReaderInfo,
-  WorkMode,
-  ReadRegion,
-  SetRegion,
-  VerifyRegion,
-  ReadPower,
-  SetPower,
-  VerifyPower,
-  EnableAntennaCheck,
-  DetectAntennas,
-  ConfigureAntennas,
-  DisableTagFocus,
-  SetQAndSession,
-  SetEpcMode,
-  ClearMask,
-  Completed,
-  Error
+  Idle,                ///< Konfiguracja nie została rozpoczęta.
+  ReaderInfo,          ///< Odczyt firmware i modelu.
+  WorkMode,            ///< Sprawdzenie trybu pracy.
+  ReadRegion,          ///< Odczyt i porównanie regionu.
+  SetRegion,           ///< Ustawienie wymaganego regionu.
+  VerifyRegion,        ///< Weryfikacja ustawionego regionu.
+  ReadPower,           ///< Odczyt i porównanie mocy anten.
+  SetPower,            ///< Ustawienie wymaganej mocy anten.
+  VerifyPower,         ///< Weryfikacja ustawionej mocy.
+  EnableAntennaCheck,  ///< Włączenie kontroli połączenia anten.
+  DetectAntennas,      ///< Wykrywanie podłączonych portów.
+  ConfigureAntennas,   ///< Ustawienie maski wykrytych anten.
+  DisableTagFocus,     ///< Wyłączenie TagFocus.
+  SetQAndSession,      ///< Ustawienie parametrów Q i sesji.
+  SetEpcMode,          ///< Wyłączenie dołączania TID.
+  ClearMask,           ///< Wyłączenie filtrowania tagów.
+  Completed,           ///< Konfiguracja zakończona poprawnie.
+  Error                ///< Konfiguracja przerwana błędem.
 };
 
+/** Wynik porównania odczytanego ustawienia z konfiguracją wymaganą przez program. */
 enum class ConfigurationCheck {
-  Error,
-  Matches,
-  NeedsUpdate
+  Error,        ///< Nie udało się odczytać poprawnej wartości.
+  Matches,      ///< Ustawienie jest zgodne.
+  NeedsUpdate   ///< Ustawienie wymaga zmiany.
 };
 
+/** Interpretacja odpowiedzi na sprawdzenie połączenia portu antenowego. */
 enum class AntennaProbeResult {
-  Ignore,
-  MoreFrames,
-  Connected,
-  Disconnected,
-  Unknown
+  Ignore,        ///< Odpowiedź nie dotyczy aktualnie sprawdzanego portu.
+  MoreFrames,    ///< Należy oczekiwać na kolejne ramki tego sprawdzenia.
+  Connected,     ///< Odpowiedź wskazuje podłączoną antenę.
+  Disconnected,  ///< Czytnik zgłosił błąd połączenia anteny.
+  Unknown        ///< Nie można określić stanu połączenia.
 };
 
+/** Bufor i stan składania pojedynczej ramki odpowiedzi z bajtów UART. */
 struct RfidReceiver {
+  /** Odebrane bajty ramki, łącznie z nagłówkiem i CRC16. */
   uint8_t buffer[256] = {};
+  /** Liczba bajtów zgromadzonych w bieżącej ramce. */
   size_t byteCount = 0;
+  /** Całkowita długość ramki wyznaczona na podstawie jej pierwszego bajtu. */
   size_t expectedLength = 0;
+  /** Moment odebrania ostatniego bajtu w milisekundach. */
   uint32_t lastByteMs = 0;
 };
 
+/**
+ *  Widok statusu i danych odebranej odpowiedzi, bez kopiowania bufora.
+ *  Wskaźnik data pozostaje użyteczny tylko do nadpisania bufora rx.
+ */
 struct RfidResponseView {
+  /** Status operacji zwrócony przez czytnik. */
   uint8_t status = 0;
+  /** Początek danych odpowiedzi w buforze rx, za bajtem statusu. */
   const uint8_t* data = nullptr;
+  /** Długość danych odpowiedzi, bez nagłówka i CRC16. */
   size_t dataLength = 0;
 };
 
+/** Jeden unikalny EPC zapisany w wyniku bieżącej inwentaryzacji. */
 struct FastInventoryTag {
+  /** Bajty identyfikatora EPC, bez dołączonego TID. */
   uint8_t epc[MAX_FAST_EPC_LENGTH] = {};
+  /** Liczba używanych bajtów w tablicy epc. */
   uint8_t epcLength = 0;
 };
 
+/** Odbiornik ramki aktualnie składanej z danych UART. */
 RfidReceiver rx;
 
+/** @name Stan obsługi komend i konfiguracji */
+///@{
+/** Komenda oczekująca na odpowiedź. */
 PendingRequest pendingRequest = PendingRequest::None;
+/** Aktualny etap pojedynczej inwentaryzacji. */
 FastInventoryState fastInventoryState = FastInventoryState::Idle;
+/** Aktualny krok konfiguracji czytnika. */
 ReaderConfigurationStep readerConfigurationStep =
   ReaderConfigurationStep::Idle;
+/** Zezwolenie na wysłanie komendy przez automat konfiguracji. */
 bool readerConfigurationDispatching = false;
+///@}
 
+/** @name Zmienne czasowe
+ *  Momenty zdarzeń zapisywane na podstawie millis().
+ */
+///@{
+/** Początek oczekiwania na odpowiedź; odświeżany przy kolejnych ramkach sprawdzania anteny. */
 uint32_t requestStartedMs = 0;
+/** Moment otrzymania poprawnego potwierdzenia START. */
 uint32_t fastInventoryStartedMs = 0;
+/** Moment ostatniej ramki tagu albo otrzymania potwierdzenia START lub STOP. */
 uint32_t fastInventoryLastFrameMs = 0;
+/** Moment rozpoczęcia odbioru końcowych danych po potwierdzeniu STOP. */
 uint32_t fastInventoryDrainStartedMs = 0;
+/** Początek sprawdzania portu, używany do kontroli bezwzględnego limitu czasu. */
 uint32_t antennaProbeStartedMs = 0;
+/** Najwcześniejszy dozwolony moment rozpoczęcia sprawdzania kolejnego portu. */
 uint32_t nextAntennaProbeEarliestMs = 0;
+///@}
+
+/** @name Liczniki prób ustawienia konfiguracji */
+///@{
+/** Licznik kontroli limitu prób ustawienia regionu. */
 uint8_t regionSetAttempts = 0;
+/** Licznik kontroli limitu prób ustawienia mocy anten. */
 uint8_t powerSetAttempts = 0;
+///@}
 
+/** @name Stan wykrywania anten
+ *  W maskach bit 0 oznacza port 1, a kolejne bity odpowiadają kolejnym portom.
+ */
+///@{
+/** Aktualnie sprawdzany port od 1 do ANTENNA_PORT_COUNT; 0 oznacza brak portu. */
 uint8_t testedAntennaPort = 0;
+/** Informacja, czy trwa sprawdzanie połączenia anten. */
 bool antennaDetectionActive = false;
+/** Porty, na których wykryto podłączoną antenę. */
 uint16_t activeAntennaMask = 0;
+/** Porty, na których czytnik zgłosił błąd połączenia anteny. */
 uint16_t disconnectedAntennaMask = 0;
+/** Porty jeszcze niesprawdzone albo bez jednoznacznego wyniku. */
 uint16_t unknownAntennaMask = 0;
+///@}
 
+/** @name Wynik pojedynczej inwentaryzacji */
+///@{
+/** Tablica unikalnych EPC w kolejności pierwszego wykrycia. */
 FastInventoryTag fastInventoryTags[MAX_FAST_INVENTORY_TAGS];
+/** Liczba zapisanych elementów tablicy fastInventoryTags. */
 size_t fastInventoryTagCount = 0;
+/** Przepełnienie tablicy EPC, uniemożliwiające publikację pełnego wyniku. */
 bool fastInventoryOverflow = false;
+/** Odebrano nieprawidłowe dane tagu; komunikat zostanie wypisany przy zakończeniu. */
 bool fastInventoryInvalidTagReceived = false;
+///@}
 
-// Antenna mask helper function/////////////////////////
+/**
+ *  Wyznaczenie bitu maski odpowiadającego portowi antenowemu.
+ *  \param port Numer portu od 1 do ANTENNA_PORT_COUNT.
+ *  \return Maska z jednym ustawionym bitem albo 0 dla nieprawidłowego portu.
+ */
 uint16_t antennaBit(uint8_t port) {
   if (port < 1 || port > ANTENNA_PORT_COUNT) {
     return 0;
@@ -236,12 +379,49 @@ bool startTrackedRequest(PendingRequest request, uint8_t command, const uint8_t*
 bool finishTrackedRequest(PendingRequest expectedRequest);
 bool prepareResponse(const char* operationName, size_t responseLength, RfidResponseView& response);
 bool prepareSuccessfulResponse(const char* operationName, size_t responseLength, size_t minimumDataLength, RfidResponseView& response);
+/**
+ *  Rozpoczęcie automatycznej konfiguracji wolnego czytnika.
+ *  Zeruje liczniki prób ustawień i wysyła żądanie informacji o czytniku.
+ *  \return true, jeśli rozpoczęto pierwszy krok; false, jeśli czytnik jest zajęty
+ *  albo nie udało się wysłać żądania.
+ */
 bool startReaderConfiguration();
+/**
+ *  Uruchomienie wskazanego kroku automatu konfiguracji.
+ *  \param step Krok, który ma zostać wykonany.
+ *  \return true, jeśli rozpoczęto krok lub osiągnięto Completed; false w razie
+ *  błędu uruchomienia albo przekazania nieobsługiwanego kroku.
+ */
 bool startReaderConfigurationStep(ReaderConfigurationStep step);
+/**
+ *  Przejście do kolejnego kroku tylko wtedy, gdy trwa oczekiwany etap konfiguracji.
+ *  \param expected Etap, którego odpowiedź została obsłużona.
+ *  \param next Etap uruchamiany po zakończeniu oczekiwanego kroku.
+ */
 void continueReaderConfiguration(ReaderConfigurationStep expected, ReaderConfigurationStep next);
+/**
+ *  Wybór dalszego kroku konfiguracji na podstawie porównania regionu.
+ *  Zgodny region pozwala przejść do mocy anten; niezgodny wymaga ustawienia
+ *  i weryfikacji, a błąd przerywa konfigurację.
+ *  \param result Wynik odczytu i porównania regionu.
+ */
 void handleRegionConfigurationResult(ConfigurationCheck result);
+/**
+ *  Wybór dalszego kroku konfiguracji na podstawie porównania mocy anten.
+ *  Zgodna moc pozwala przejść do kontroli anten; niezgodna wymaga ustawienia
+ *  i weryfikacji, a błąd przerywa konfigurację.
+ *  \param result Wynik odczytu i porównania mocy portów.
+ */
 void handlePowerConfigurationResult(ConfigurationCheck result);
+/**
+ *  Przerwanie automatycznej konfiguracji przez ustawienie stanu Error.
+ *  \param reason Powód przerwania wypisywany na port szeregowy.
+ */
 void failReaderConfiguration(const char* reason);
+/**
+ *  Sprawdzenie, czy automat konfiguracji wykonuje obecnie któryś z kroków.
+ *  \return false dla Idle, Completed i Error; true dla pozostałych stanów.
+ */
 bool readerConfigurationIsActive();
 
 bool requestReaderInfo();
@@ -291,7 +471,12 @@ void publishFastInventoryResult();
 
 ////////////////////////////////////////////////////////
 
-// LOOP /////////////////////////////////////////////////////////////////
+/**
+ *  Obsługa odpowiedzi czytnika i odmierzania czasu operacji.
+ *  Przetwarza ograniczoną liczbę ramek, dopasowuje odpowiedzi do komend
+ *  i obsługuje przekroczenie czasu oczekiwania. Następnie aktualizuje stan
+ *  inwentaryzacji oraz wykrywania anten. Wywoływana regularnie z loop().
+ */
 void handleReaderRequest() {
   for (uint8_t processedFrameCount = 0;
        processedFrameCount < MAX_RX_FRAMES_PER_LOOP;
@@ -552,7 +737,12 @@ void handleReaderRequest() {
 
 // Function definitions /////////////////////////////////////////////////
 
-// check length and verify calculated CRC with received CRC
+/**
+ *  Sprawdzenie długości ramki odpowiedzi i zgodności jej sumy CRC16.
+ *  \param frame Wskaźnik na całą odebraną ramkę.
+ *  \param frameLength Liczba bajtów ramki, łącznie z polem długości i CRC16.
+ *  \return true dla poprawnej długości i CRC; false także dla pustego wskaźnika.
+ */
 bool validFrame(const uint8_t* frame, size_t frameLength)
 {
   constexpr size_t MIN_RESPONSE_LENGTH = 6;
@@ -579,8 +769,17 @@ bool validFrame(const uint8_t* frame, size_t frameLength)
   return calculatedCrc == receivedCrc;
 }
 
-// constructs command frame for the reader, calculates length, inserts data array and calculates crc
-// Length | Address | Command | Data[] | LSB-CRC16 | MSB-CRC16
+/**
+ *  Zbudowanie ramki komendy z adresem czytnika, danymi i sumą CRC16.
+ *  Kolejność pól: długość, adres, komenda, dane, młodszy i starszy bajt CRC16.
+ *  \param command Kod komendy czytnika.
+ *  \param data Dane komendy; nullptr jest dozwolone, gdy dataLength wynosi 0.
+ *  \param dataLength Liczba bajtów danych komendy, maksymalnie 251.
+ *  \param frame Bufor, w którym ma zostać zapisana gotowa ramka.
+ *  \param frameCapacity Pojemność bufora frame w bajtach.
+ *  \return Długość zbudowanej ramki albo 0 przy nieprawidłowych argumentach
+ *  lub zbyt małym buforze.
+ */
 size_t buildCommandFrame(
   uint8_t        command,
   const uint8_t* data,
@@ -624,17 +823,24 @@ size_t buildCommandFrame(
   return frameLength;
 }
 
-//sets global variables for rx communications to zero, so that receiver function starts over  
+/**
+ *  Wyzerowanie liczników odbiornika przed składaniem kolejnej ramki.
+ *  Nie usuwa danych zapisanych w rx.buffer ani bajtów oczekujących w UART.
+ */
 void resetResponseReceiver() {
     rx.byteCount = 0;
     rx.expectedLength = 0;
     rx.lastByteMs = 0;
 }
 
-// Length | Address | reCommand | Status | Data[] | LSB-CRC16 | MSB-CRC16
-
-
-// sends frame without waiting for a response
+/**
+ *  Zbudowanie i wysłanie ramki komendy przez UART.
+ *  Czeka na zakończenie nadawania, ale nie oczekuje na odpowiedź czytnika.
+ *  \param command Kod wysyłanej komendy.
+ *  \param data Dane komendy albo nullptr, jeśli komenda nie ma danych.
+ *  \param dataLength Liczba bajtów danych.
+ *  \return true, jeśli wysłano całą ramkę; false przy błędzie budowania lub zapisu.
+ */
 bool sendFrame(
   uint8_t command,
   const uint8_t* data,
@@ -668,6 +874,14 @@ bool sendFrame(
   return true;
 }
 
+/**
+ *  Składanie jednej odpowiedzi z bajtów dostępnych w UART.
+ *  Zachowuje niepełną ramkę do kolejnego wywołania, kontroluje odstępy między
+ *  bajtami i CRC16. Gotowa ramka pozostaje w rx.buffer do dalszej obsługi.
+ *  \param responseLength Długość odebranej ramki w bajtach; 0, jeśli nie ma wyniku.
+ *  \return true po odebraniu poprawnej, pełnej ramki; false, gdy odbiór nie jest
+ *  zakończony lub wykryto błąd.
+ */
 bool receiveFrame(size_t& responseLength) {
 
   responseLength = 0;
@@ -734,7 +948,16 @@ bool receiveFrame(size_t& responseLength) {
   return false;
 }
 
-// sends requests with cmd codes to the rfid reader
+/**
+ *  Wysłanie komendy i rozpoczęcie śledzenia jej odpowiedzi.
+ *  Sprawdza zajętość czytnika oraz wyłączność komend konfiguracji i STOP.
+ *  \param request Rodzaj żądania zapisywany w pendingRequest.
+ *  \param command Kod komendy wysyłanej do czytnika.
+ *  \param data Dane komendy albo nullptr przy zerowej długości.
+ *  \param dataLength Liczba bajtów danych komendy.
+ *  \return true po wysłaniu komendy i zapisaniu czasu oczekiwania;
+ *  false, gdy komenda jest zablokowana lub transmisja się nie powiodła.
+ */
 bool startTrackedRequest(PendingRequest request, uint8_t command, const uint8_t* data, size_t dataLength) {
 
   // Rezerwujemy kanał komend dla STOP, aby diagnostyka nie wydłużyła skanowania.
@@ -770,6 +993,12 @@ bool startTrackedRequest(PendingRequest request, uint8_t command, const uint8_t*
   return true;
 }
 
+/**
+ *  Zakończenie oczekiwania na odpowiedź właściwego rodzaju komendy.
+ *  Nie sprawdza statusu wykonania komendy zwróconego przez czytnik.
+ *  \param expectedRequest Rodzaj żądania odpowiadający odebranej ramce.
+ *  \return true po wyzerowaniu pendingRequest; false, gdy oczekuje inne żądanie.
+ */
 bool finishTrackedRequest(PendingRequest expectedRequest) {
   if (pendingRequest != expectedRequest) {
     Serial.println(
@@ -781,7 +1010,15 @@ bool finishTrackedRequest(PendingRequest expectedRequest) {
   return true;
 }
 
-// Validates response length and creates a non-owning view into the RX buffer.
+/**
+ *  Przygotowanie widoku statusu i danych odpowiedzi znajdującej się w rx.buffer.
+ *  Sprawdza zakres długości ramki, zakładając wcześniejszą kontrolę CRC16.
+ *  Widok nie kopiuje danych i traci aktualność po nadpisaniu bufora odbiornika.
+ *  \param operationName Nazwa operacji używana w komunikatach błędów.
+ *  \param responseLength Liczba bajtów całej odebranej ramki.
+ *  \param response Widok wypełniany po sprawdzeniu długości; zerowany przed kontrolą.
+ *  \return true, jeśli długość pozwala odczytać status i wyznaczyć dane.
+ */
 bool prepareResponse(
   const char* operationName,
   size_t responseLength,
@@ -810,7 +1047,15 @@ bool prepareResponse(
   return true;
 }
 
-// Validates regular responses whose success status is 0x00.
+/**
+ *  Sprawdzenie odpowiedzi, dla której poprawny status wykonania wynosi 0x00.
+ *  Oprócz długości ramki kontroluje status i minimalną ilość danych.
+ *  \param operationName Nazwa operacji używana w komunikatach błędów.
+ *  \param responseLength Liczba bajtów całej ramki w rx.buffer.
+ *  \param minimumDataLength Minimalna wymagana liczba bajtów danych odpowiedzi.
+ *  \param response Widok poprawnej odpowiedzi; w razie błędu pozostaje wyzerowany.
+ *  \return true dla statusu 0x00 i wystarczającej ilości danych; false przy błędzie.
+ */
 bool prepareSuccessfulResponse(
   const char* operationName,
   size_t responseLength,
@@ -843,10 +1088,19 @@ bool prepareSuccessfulResponse(
   return true;
 }
 
+/**
+ *  Wysłanie zapytania o wersję firmware i model czytnika.
+ *  \return true, gdy wysłano komendę i rozpoczęto oczekiwanie na odpowiedź.
+ */
 bool requestReaderInfo() {
   return startTrackedRequest(PendingRequest::ReaderInfo, CMD_GET_READER_INFO, nullptr, 0);
 }
 
+/**
+ *  Sprawdzenie odpowiedzi i wyświetlenie wersji firmware oraz modelu czytnika.
+ *  \param responseLength Długość całej ramki odpowiedzi w buforze rx.buffer.
+ *  \return true, gdy odpowiedź potwierdza powodzenie i zawiera wymagane dane.
+ */
 bool handleReaderInfo(size_t responseLength) {
   RfidResponseView response;
   if (!prepareSuccessfulResponse(
@@ -866,10 +1120,19 @@ bool handleReaderInfo(size_t responseLength) {
   return true;
 }
 
+/**
+ *  Wysłanie zapytania o temperaturę czytnika.
+ *  \return true, gdy wysłano komendę i rozpoczęto oczekiwanie na odpowiedź.
+ */
 bool requestReaderTemperature() {
   return startTrackedRequest(PendingRequest::Temperature, CMD_GET_READER_TEMPERATURE, nullptr, 0);
 }
 
+/**
+ *  Sprawdzenie odpowiedzi i wyświetlenie temperatury czytnika w stopniach Celsjusza.
+ *  Uwzględnia znak temperatury przekazany przez czytnik.
+ *  \param responseLength Długość całej ramki odpowiedzi w buforze rx.buffer.
+ */
 void handleReaderTemperature(size_t responseLength) {
   RfidResponseView response;
   if (!prepareSuccessfulResponse(
@@ -888,10 +1151,19 @@ void handleReaderTemperature(size_t responseLength) {
   Serial.printf("%d℃", static_cast<unsigned>(response.data[1]));
 }
 
+/**
+ *  Wysłanie zapytania o tryb pracy czytnika.
+ *  \return true, gdy wysłano komendę i rozpoczęto oczekiwanie na odpowiedź.
+ */
 bool requestWorkMode() {
   return startTrackedRequest(PendingRequest::WorkMode, CMD_GET_WORK_MODE, nullptr, 0);
 }
 
+/**
+ *  Odczyt trybu pracy i sprawdzenie, czy czytnik pracuje w answering mode.
+ *  \param responseLength Długość całej ramki odpowiedzi w buforze rx.buffer.
+ *  \return true, gdy odpowiedź jest poprawna i tryb pracy ma wartość 0x00.
+ */
 bool handleWorkMode(size_t responseLength) {
   RfidResponseView response;
   if (!prepareSuccessfulResponse(
@@ -918,6 +1190,10 @@ bool handleWorkMode(size_t responseLength) {
   return true;
 }
 
+/**
+ *  Wysłanie zapytania o region i zakres kanałów częstotliwości czytnika.
+ *  \return true, gdy wysłano komendę i rozpoczęto oczekiwanie na odpowiedź.
+ */
 bool requestReadRegion() {
   return startTrackedRequest(
     PendingRequest::ReadRegion,
@@ -926,6 +1202,12 @@ bool requestReadRegion() {
     0);
 }
 
+/**
+ *  Porównanie odczytanego regionu i granic kanałów z konfiguracją EU3 programu.
+ *  \param responseLength Długość całej ramki odpowiedzi w buforze rx.buffer.
+ *  \return Matches dla zgodnych ustawień, NeedsUpdate dla wymaganej zmiany
+ *  lub Error, gdy odpowiedź jest niepoprawna.
+ */
 ConfigurationCheck handleReadRegion(size_t responseLength) {
   RfidResponseView response;
   if (!prepareSuccessfulResponse(
@@ -961,6 +1243,11 @@ ConfigurationCheck handleReadRegion(size_t responseLength) {
   return ConfigurationCheck::NeedsUpdate;
 }
 
+/**
+ *  Wysłanie komendy ustawiającej region EU3 i skonfigurowany zakres kanałów.
+ *  Ustawienie jest tymczasowe i nie jest zachowywane po wyłączeniu zasilania.
+ *  \return true, gdy wysłano komendę i rozpoczęto oczekiwanie na odpowiedź.
+ */
 bool requestSetRegion() {
   const uint8_t data[] = {
     0x01, // temporary setting, do not save on power-off
@@ -976,6 +1263,11 @@ bool requestSetRegion() {
     sizeof(data));
 }
 
+/**
+ *  Sprawdzenie potwierdzenia tymczasowego ustawienia regionu czytnika.
+ *  \param responseLength Długość całej ramki odpowiedzi w buforze rx.buffer.
+ *  \return true, gdy odebrano poprawne potwierdzenie powodzenia komendy.
+ */
 bool handleSetRegion(size_t responseLength) {
   RfidResponseView response;
   if (!prepareSuccessfulResponse(
@@ -990,6 +1282,10 @@ bool handleSetRegion(size_t responseLength) {
   return true;
 }
 
+/**
+ *  Wysłanie zapytania o moc wszystkich portów antenowych.
+ *  \return true, gdy wysłano komendę i rozpoczęto oczekiwanie na odpowiedź.
+ */
 bool requestReadAntennaPower() {
   return startTrackedRequest(
     PendingRequest::ReadAntennaPower,
@@ -998,6 +1294,12 @@ bool requestReadAntennaPower() {
     0);
 }
 
+/**
+ *  Wyświetlenie mocy portów antenowych i porównanie ich z RFID_POWER_DBM.
+ *  \param responseLength Długość całej ramki odpowiedzi w buforze rx.buffer.
+ *  \return Matches, gdy moc wszystkich portów jest zgodna, NeedsUpdate dla
+ *  wymaganej zmiany lub Error, gdy odpowiedź jest niepoprawna.
+ */
 ConfigurationCheck handleReadAntennaPower(size_t responseLength) {
   RfidResponseView response;
   if (!prepareSuccessfulResponse(
@@ -1035,6 +1337,11 @@ ConfigurationCheck handleReadAntennaPower(size_t responseLength) {
   return ConfigurationCheck::NeedsUpdate;
 }
 
+/**
+ *  Wysłanie komendy ustawiającej moc RFID_POWER_DBM na wszystkich portach.
+ *  Ustawienie jest tymczasowe i nie jest zachowywane po wyłączeniu zasilania.
+ *  \return true, gdy wysłano komendę i rozpoczęto oczekiwanie na odpowiedź.
+ */
 bool requestSetRfPower() {
 
   uint8_t data[ANTENNA_PORT_COUNT];
@@ -1052,6 +1359,11 @@ bool requestSetRfPower() {
     sizeof(data));
 }
 
+/**
+ *  Sprawdzenie potwierdzenia tymczasowego ustawienia mocy portów antenowych.
+ *  \param responseLength Długość całej ramki odpowiedzi w buforze rx.buffer.
+ *  \return true, gdy odebrano poprawne potwierdzenie powodzenia komendy.
+ */
 bool handleSetRfPower(size_t responseLength) {
   RfidResponseView response;
   if (!prepareSuccessfulResponse(
@@ -1066,6 +1378,10 @@ bool handleSetRfPower(size_t responseLength) {
   return true;
 }
 
+/**
+ *  Wysłanie komendy włączającej kontrolę połączenia anten w czytniku.
+ *  \return true, gdy wysłano komendę i rozpoczęto oczekiwanie na odpowiedź.
+ */
 bool requestEnableAntennaCheck() {
   const uint8_t data[] = {
     0x01
@@ -1074,6 +1390,11 @@ bool requestEnableAntennaCheck() {
   return startTrackedRequest(PendingRequest::EnableAntennaCheck, CMD_SET_ANTENNA_CHECK, data, sizeof(data));
 }
 
+/**
+ *  Sprawdzenie potwierdzenia włączenia kontroli połączenia anten.
+ *  \param responseLength Długość całej ramki odpowiedzi w buforze rx.buffer.
+ *  \return true, gdy odebrano poprawne potwierdzenie powodzenia komendy.
+ */
 bool handleEnableAntennaCheck(size_t responseLength) {
   RfidResponseView response;
   if (!prepareSuccessfulResponse(
@@ -1088,6 +1409,12 @@ bool handleEnableAntennaCheck(size_t responseLength) {
   return true;
 }
 
+/**
+ *  Przygotowanie nieblokującego sprawdzania wszystkich portów antenowych.
+ *  Zeruje poprzednie wyniki i początkowo oznacza każdy port jako nieznany.
+ *  Kolejne próby są uruchamiane przez serviceAntennaDetection().
+ *  \return true, gdy rozpoczęto wykrywanie, lub false, gdy czytnik jest zajęty.
+ */
 bool startAntennaDetection() {
   if (fastInventoryState != FastInventoryState::Idle ||
       (readerConfigurationIsActive() && !readerConfigurationDispatching)) {
@@ -1119,6 +1446,11 @@ bool startAntennaDetection() {
   return true;
 }
 
+/**
+ *  Obsługa kolejnego kroku wykrywania anten z głównej pętli programu.
+ *  Wysyła próbę dla bieżącego portu, gdy nie trwa inne żądanie i upłynęła
+ *  wymagana przerwa. Błąd wysłania zapisuje jako wynik nieznany.
+ */
 void serviceAntennaDetection() {
   if (!antennaDetectionActive ||
       pendingRequest != PendingRequest::None) {
@@ -1150,6 +1482,12 @@ void serviceAntennaDetection() {
   }
 }
 
+/**
+ *  Wysłanie krótkiej inwentaryzacji G2 sprawdzającej wybrany port antenowy.
+ *  Zapamiętuje czas rozpoczęcia próby do kontroli jej maksymalnego czasu.
+ *  \param port Numer portu od 1 do ANTENNA_PORT_COUNT.
+ *  \return true, gdy wysłano komendę i rozpoczęto oczekiwanie na odpowiedź.
+ */
 bool requestAntennaProbe(uint8_t port) {
   if (port < 1 || port > ANTENNA_PORT_COUNT) {
     Serial.printf(
@@ -1184,6 +1522,16 @@ bool requestAntennaProbe(uint8_t port) {
   return true;
 }
 
+/**
+ *  Określenie stanu połączenia anteny na podstawie odpowiedzi próby G2.
+ *  Status 0xF8 oznacza nieudaną kontrolę połączenia. Końcowe statusy
+ *  inwentaryzacji i błędy tagów potwierdzają połączenie także bez odczytu EPC.
+ *  Ramki zapowiadające dalsze dane wymagają kontynuacji odbioru, a odpowiedzi
+ *  dotyczące innego portu są pomijane.
+ *  \param responseLength Długość całej ramki odpowiedzi w buforze rx.buffer.
+ *  \return Connected, Disconnected lub Unknown dla wyniku próby,
+ *  MoreFrames przy oczekiwaniu na dalsze dane lub Ignore dla pomijanej ramki.
+ */
 AntennaProbeResult handleAntennaProbeResponse(
   size_t responseLength) {
 
@@ -1259,6 +1607,11 @@ AntennaProbeResult handleAntennaProbeResponse(
   }
 }
 
+/**
+ *  Zapisanie końcowego wyniku bieżącego portu w odpowiedniej masce anten.
+ *  Przechodzi do następnego portu lub kończy wykrywanie po ostatniej próbie.
+ *  \param result Końcowy wynik: Connected, Disconnected albo Unknown.
+ */
 void recordAntennaProbeResult(AntennaProbeResult result) {
   if (!antennaDetectionActive ||
       testedAntennaPort < 1 ||
@@ -1309,6 +1662,10 @@ void recordAntennaProbeResult(AntennaProbeResult result) {
   }
 }
 
+/**
+ *  Oznaczenie wyniku bieżącej próby jako nieznanego po przekroczeniu czasu.
+ *  Opóźnia próbę następnego portu, aby umożliwić odebranie spóźnionej ramki.
+ */
 void handleAntennaProbeTimeout() {
   recordAntennaProbeResult(AntennaProbeResult::Unknown);
 
@@ -1319,6 +1676,11 @@ void handleAntennaProbeTimeout() {
   }
 }
 
+/**
+ *  Zakończenie wykrywania i wyświetlenie list podłączonych, odłączonych
+ *  oraz nierozpoznanych anten. W konfiguracji startowej przechodzi do
+ *  ustawienia aktywnych anten lub zgłasza błąd, jeśli nie wykryto żadnej.
+ */
 void finishAntennaDetection() {
   antennaDetectionActive = false;
   testedAntennaPort = 0;
@@ -1341,6 +1703,11 @@ void finishAntennaDetection() {
                               ReaderConfigurationStep::ConfigureAntennas);
 }
 
+/**
+ *  Wyświetlenie maski anten i odpowiadających jej numerów portów.
+ *  \param label Opis wyświetlany przed maską i listą anten.
+ *  \param mask Maska portów, w której bit 0 odpowiada ANT1.
+ */
 void printAntennaPorts(const char* label, uint16_t mask) {
   Serial.printf(
     "[RFID] %s [maska 0x%04X]: ",
@@ -1369,6 +1736,11 @@ void printAntennaPorts(const char* label, uint16_t mask) {
   Serial.println();
 }
 
+/**
+ *  Wysłanie komendy tymczasowo aktywującej anteny z activeAntennaMask.
+ *  Pusta maska uniemożliwia wysłanie komendy.
+ *  \return true, gdy wysłano komendę i rozpoczęto oczekiwanie na odpowiedź.
+ */
 bool requestConfigureAntennas() {
   if (activeAntennaMask == 0) {
     return false;
@@ -1388,6 +1760,11 @@ bool requestConfigureAntennas() {
 }
 
 
+/**
+ *  Sprawdzenie potwierdzenia ustawienia maski aktywnych anten.
+ *  \param responseLength Długość całej ramki odpowiedzi w buforze rx.buffer.
+ *  \return true, gdy odebrano poprawne potwierdzenie powodzenia komendy.
+ */
 bool handleConfigureAntennas(size_t responseLength) {
   RfidResponseView response;
   if (!prepareSuccessfulResponse(
@@ -1402,6 +1779,10 @@ bool handleConfigureAntennas(size_t responseLength) {
   return true;
 }
 
+/**
+ *  Wysłanie komendy tymczasowo wyłączającej TagFocus dla inwentaryzacji.
+ *  \return true, gdy wysłano komendę i rozpoczęto oczekiwanie na odpowiedź.
+ */
 bool requestDisableTagFocus() {
   const uint8_t data[] = {
     0x01, // temporary setting, do not save on power-off
@@ -1420,6 +1801,11 @@ bool requestDisableTagFocus() {
   return true;
 }
 
+/**
+ *  Sprawdzenie potwierdzenia wyłączenia TagFocus.
+ *  \param responseLength Długość całej ramki odpowiedzi w buforze rx.buffer.
+ *  \return true, gdy odebrano poprawne potwierdzenie powodzenia komendy.
+ */
 bool handleDisableTagFocus(size_t responseLength) {
   RfidResponseView response;
   if (!prepareSuccessfulResponse(
@@ -1434,6 +1820,10 @@ bool handleDisableTagFocus(size_t responseLength) {
   return true;
 }
 
+/**
+ *  Wysłanie komendy tymczasowo ustawiającej Q_VALUE i SESSION dla inwentaryzacji.
+ *  \return true, gdy wysłano komendę i rozpoczęto oczekiwanie na odpowiedź.
+ */
 bool requestSetQAndSession() {
   const uint8_t data[] = {
     0x01, // temporary setting, do not save on power-off
@@ -1453,6 +1843,11 @@ bool requestSetQAndSession() {
   return true;
 }
 
+/**
+ *  Sprawdzenie potwierdzenia ustawienia parametru Q i sesji inwentaryzacji.
+ *  \param responseLength Długość całej ramki odpowiedzi w buforze rx.buffer.
+ *  \return true, gdy odebrano poprawne potwierdzenie powodzenia komendy.
+ */
 bool handleSetQAndSession(size_t responseLength) {
   RfidResponseView response;
   if (!prepareSuccessfulResponse(
@@ -1467,6 +1862,11 @@ bool handleSetQAndSession(size_t responseLength) {
   return true;
 }
 
+/**
+ *  Wysłanie komendy tymczasowo wybierającej zwracanie EPC podczas inwentaryzacji.
+ *  Zerowa długość TID wybiera tryb odczytu EPC.
+ *  \return true, gdy wysłano komendę i rozpoczęto oczekiwanie na odpowiedź.
+ */
 bool requestSetEpcMode() {
   const uint8_t data[] = {
     0x01, // temporary setting, do not save on power-off
@@ -1486,6 +1886,11 @@ bool requestSetEpcMode() {
   return true;
 }
 
+/**
+ *  Sprawdzenie potwierdzenia ustawienia zwracania EPC podczas inwentaryzacji.
+ *  \param responseLength Długość całej ramki odpowiedzi w buforze rx.buffer.
+ *  \return true, gdy odebrano poprawne potwierdzenie powodzenia komendy.
+ */
 bool handleSetEpcMode(size_t responseLength) {
   RfidResponseView response;
   if (!prepareSuccessfulResponse(
@@ -1500,6 +1905,11 @@ bool handleSetEpcMode(size_t responseLength) {
   return true;
 }
 
+/**
+ *  Wysłanie komendy tymczasowo wyłączającej filtrowanie tagów maską EPC.
+ *  Zerowa długość maski pozwala objąć inwentaryzacją wszystkie tagi.
+ *  \return true, gdy wysłano komendę i rozpoczęto oczekiwanie na odpowiedź.
+ */
 bool requestClearInventoryMask() {
   const uint8_t data[] = {
     0x01, // temporary setting, do not save on power-off
@@ -1520,6 +1930,11 @@ bool requestClearInventoryMask() {
   return true;
 }
 
+/**
+ *  Sprawdzenie potwierdzenia wyłączenia maski tagów podczas inwentaryzacji.
+ *  \param responseLength Długość całej ramki odpowiedzi w buforze rx.buffer.
+ *  \return true, gdy odebrano poprawne potwierdzenie powodzenia komendy.
+ */
 bool handleClearInventoryMask(size_t responseLength) {
   RfidResponseView response;
   if (!prepareSuccessfulResponse(
@@ -1534,6 +1949,10 @@ bool handleClearInventoryMask(size_t responseLength) {
   return true;
 }
 
+/**
+ *  Wyczyszczenie listy EPC, flag błędów i czasów przed nową inwentaryzacją.
+ *  Nie wysyła komend ani nie zmienia etapu zapisanego w fastInventoryState.
+ */
 void resetFastInventory() {
   memset(fastInventoryTags, 0, sizeof(fastInventoryTags));
   fastInventoryTagCount = 0;
@@ -1544,12 +1963,25 @@ void resetFastInventory() {
   fastInventoryDrainStartedMs = 0;
 }
 
-// callback.h nadal przekazuje dawną liczbę prób. Każde żądanie uruchamia
-// tylko jedną inwentaryzację, niezależnie od wartości tego argumentu.
+/**
+ *  Uruchomienie pojedynczej inwentaryzacji przez dawny interfejs callback.h.
+ *  Nienazwany argument liczbowy jest ignorowany, także gdy wynosi 0.
+ *  Każde przyjęte żądanie oznacza jeden skan, bez serii i automatycznych powtórzeń.
+ *  \return Wynik requestStartFastInventory(): true po wysłaniu START,
+ *  false, jeśli nie można rozpocząć inwentaryzacji.
+ */
 bool startFastInventoryTest(uint32_t) {
   return requestStartFastInventory();
 }
 
+/**
+ *  Wysłanie START dla jednej inwentaryzacji po zakończeniu konfiguracji.
+ *  Wymaga wolnego czytnika, aktywnej anteny i zakończonego wykrywania portów.
+ *  Czyści poprzedni wynik; odliczanie 5 sekund rozpoczyna się dopiero po
+ *  otrzymaniu poprawnego potwierdzenia START.
+ *  \return true po wysłaniu START i przejściu do Starting; false, jeśli warunki
+ *  startu nie są spełnione lub wysłanie komendy się nie powiodło.
+ */
 bool requestStartFastInventory() {
   if (fastInventoryState != FastInventoryState::Idle ||
       readerConfigurationStep != ReaderConfigurationStep::Completed ||
@@ -1579,6 +2011,12 @@ bool requestStartFastInventory() {
   return true;
 }
 
+/**
+ *  Sprawdzenie potwierdzenia START i rozpoczęcie odmierzania czasu skanowania.
+ *  Poprawna odpowiedź przełącza inwentaryzację do stanu Running.
+ *  \param responseLength Liczba bajtów całej ramki odpowiedzi w rx.buffer.
+ *  \return true dla poprawnego potwierdzenia; false przy błędzie odpowiedzi.
+ */
 bool handleStartFastInventory(size_t responseLength) {
   RfidResponseView response;
   if (!prepareSuccessfulResponse(
@@ -1600,6 +2038,15 @@ bool handleStartFastInventory(size_t responseLength) {
   return true;
 }
 
+/**
+ *  Odczytanie EPC z asynchronicznej ramki tagu i dodanie go do wyniku.
+ *  Przyjmuje tagi w stanach Starting, Running, Stopping i Draining.
+ *  Rozpoznaje dodatkowe pola ramki, pomija TID w trybie FastID i nie zapisuje
+ *  duplikatów EPC. Nie kończy żądania oczekującego w pendingRequest.
+ *  \param responseLength Liczba bajtów całej ramki tagu w rx.buffer.
+ *  \return true, jeśli zapisano nowy EPC lub znaleziono już zapisany;
+ *  false przy nieaktywnym odbiorze, nieprawidłowych danych lub przepełnieniu.
+ */
 bool handleFastInventoryTag(size_t responseLength) {
   const bool inventoryAcceptsTags =
     fastInventoryState == FastInventoryState::Starting ||
@@ -1679,6 +2126,12 @@ bool handleFastInventoryTag(size_t responseLength) {
   return true;
 }
 
+/**
+ *  Zakończenie inwentaryzacji po odebraniu wszystkich końcowych danych.
+ *  Przepełnienie tablicy EPC ustawia Error i blokuje publikację niepełnej listy.
+ *  W pozostałych przypadkach zgłasza odrzucone dane tagów, jeśli takie były,
+ *  przechodzi do Idle i wywołuje publikację wyniku przez MQTT.
+ */
 void finishFastInventory() {
   // Nie publikujemy niepełnej listy EPC po przepełnieniu bufora.
   if (fastInventoryOverflow) {
@@ -1698,6 +2151,11 @@ void finishFastInventory() {
   publishFastInventoryResult();
 }
 
+/**
+ *  Wysłanie komendy STOP i rozpoczęcie oczekiwania na jej potwierdzenie.
+ *  \return true po wysłaniu komendy i przejściu do Stopping;
+ *  false, jeśli nie udało się rozpocząć żądania.
+ */
 bool requestStopFastInventory() {
   if (!startTrackedRequest(
         PendingRequest::StopFastInventory,
@@ -1711,6 +2169,12 @@ bool requestStopFastInventory() {
   return true;
 }
 
+/**
+ *  Sprawdzenie potwierdzenia STOP i rozpoczęcie odbioru końcowych danych.
+ *  Poprawna odpowiedź ustawia stan Draining i czas rozpoczęcia tego etapu.
+ *  \param responseLength Liczba bajtów całej ramki odpowiedzi w rx.buffer.
+ *  \return true dla poprawnego potwierdzenia; false przy błędzie odpowiedzi.
+ */
 bool handleStopFastInventory(size_t responseLength) {
   RfidResponseView response;
   if (!prepareSuccessfulResponse(
@@ -1729,6 +2193,14 @@ bool handleStopFastInventory(size_t responseLength) {
   return true;
 }
 
+/**
+ *  Obsługa czasu skanowania i zakończenia pojedynczej inwentaryzacji.
+ *  Po upływie 5 sekund od potwierdzenia START wysyła STOP. Po potwierdzeniu
+ *  STOP czeka na pusty odbiornik i co najmniej 50 ms ciszy. Jeśli po 500 ms
+ *  warunki zakończenia nadal nie są spełnione, ustawia Error i blokuje publikację.
+ *  Wywoływana z handleReaderRequest(); opóźnienie głównej pętli opóźnia
+ *  również obsługę tych terminów.
+ */
 void serviceFastInventory() {
   const uint32_t now = millis();
 
@@ -1777,6 +2249,12 @@ void serviceFastInventory() {
   }
 }
 
+/**
+ *  Przygotowanie i wysłanie listy EPC na topic reader_read_tags.
+ *  Tworzy JSON w formacie {"tags":["AABB",...]} w kolejności zapisanych tagów;
+ *  pusty wynik ma postać {"tags":[]}. Dobiera rozmiar bufora MQTT do wiadomości.
+ *  Brak pamięci na JSON lub bufor MQTT przerywa publikację z komunikatem błędu.
+ */
 void publishFastInventoryResult() {
   constexpr char HEX_DIGITS[] = "0123456789ABCDEF";
 
