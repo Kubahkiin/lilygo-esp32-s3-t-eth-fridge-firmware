@@ -1,3 +1,7 @@
+/**
+ * \file topics.h
+ * Definicje topiców mqtt w postaci zmiennych, w celu łatwej modyfikacji i porządku w programie.
+ */
 #ifndef _TOPICS_H_
 #define _TOPICS_H_
 

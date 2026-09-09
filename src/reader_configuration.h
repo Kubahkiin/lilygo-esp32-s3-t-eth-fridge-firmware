@@ -1,3 +1,8 @@
+/**
+ * \file reader_configuration.h
+ * Zestaw komend wykonwyanych jedna po drugiej, niezbędnych do konfiguracji czytnika
+ * w celu przeprowadzenia inwentaryzacji
+ */
 #ifndef _READER_CONFIGURATION_H_
 #define _READER_CONFIGURATION_H_
 

@@ -1,3 +1,9 @@
+/**
+ * \file callback.h
+ * Obsługa i interpretacja wiadomości MQTT.
+ * Tu umieszczane są wszelkie działania, które mają zostać wykonane po przyjściu wiadomości na wybrane tematy.
+ * Oprócz tematu można też sprawdzić treść wiadomości i jeśli to konieczne, dostosować reakcję programu na konkretną treść
+ */
 #ifndef _CALLBACK_H_
 #define _CALLBACK_H_
 

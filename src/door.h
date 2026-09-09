@@ -1,3 +1,8 @@
+/**
+ * \file door.h
+ * Obsługa drzwi, działanie elektrozamka i sprawdzanie czy drzwi są otwarte i czy powinny być otwarte lub zamknięte.
+ * Sterowanie oświetleniem drzwi.
+ */
 #ifndef _DOOR_H_
 #define _DOOR_H_
 /** @name Flagi

@@ -1,3 +1,8 @@
+/**
+ * \file connection.h
+ * Konfiguracja połączenia internetowego, połączenia z serwerem ntp oraz połączenie z brokerem MQTT
+ * i funkcje powiązane np. timestamp
+ */
 #ifndef _CONNECTION_H_
 #define _CONNECTION_H_
 
